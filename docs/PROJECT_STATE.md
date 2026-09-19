@@ -32,6 +32,6 @@ Build Euthenia: a Windows grocery deal app for a UW Seattle student, prioritizin
 
 ## Next action
 
-Execute Task 1 in the isolated .worktrees/m1 checkout on branch codex/m1-source-proof. That checkout's docs/PROJECT_STATE.md is the live execution checkpoint until integration. The orchestrator coordinates source applicability/date research while a fresh Sol High implementer builds and tests collection/proof. Preserve all data gates; do not claim M1 verified from fixtures or documentation alone.
+Live execution is in C:/Users/cyrus/.codex-worktrees/Euthenia-m1 on branch codex/m1-implementation. Read that checkout's docs/PROJECT_STATE.md for current status. Sol High child filesystem calls are blocked by the harness, so children author patches from supplied context and the orchestrator applies/runs them. The original D: repository is the integration destination. No source-validation criterion is waived.
 
 No product code, paid services, external accounts or real notifications have been created.

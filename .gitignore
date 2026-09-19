@@ -1,6 +1,7 @@
 .codex/
 .superpowers/
 .worktrees/
+.codex-worktrees/
 node_modules/
 dist/
 dist-core/

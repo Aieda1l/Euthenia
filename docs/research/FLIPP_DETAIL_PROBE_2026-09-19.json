@@ -1,0 +1,416 @@
+﻿{
+    "observedAt":  "2026-09-19T09:47:11.4371091+00:00",
+    "context":  "Read-only M1 planning research; source text not fully manually validated",
+    "postalCode":  "98105",
+    "endpointPattern":  "https://backflipp.wishabi.com/flipp/items/{id}",
+    "items":  [
+                  {
+                      "id":  1038428171,
+                      "flyer_id":  8123483,
+                      "name":  "Certified Angus Beef Ground Chuck",
+                      "display_type":  1,
+                      "brand":  null,
+                      "left":  36460.7,
+                      "bottom":  -1982.16,
+                      "right":  37212.5,
+                      "top":  -1073.68,
+                      "cutout_image_url":  "http://f.wishabi.net/page_items/432989324/1788469430/extra_large.jpg",
+                      "valid_from":  "2026-09-16T00:00:00-04:00",
+                      "valid_to":  "2026-09-22T23:59:59-04:00",
+                      "description":  "1 lb Package",
+                      "pre_price_text":  null,
+                      "price_text":  "With Card",
+                      "sale_story":  null,
+                      "in_store_only":  false,
+                      "disclaimer_text":  null,
+                      "sku":  null,
+                      "review_count":  0,
+                      "category":  "",
+                      "current_price_range":  null,
+                      "original_price_range":  null,
+                      "timezone":  -240,
+                      "related_items":  [
+
+                                        ],
+                      "shipping_info_title":  "",
+                      "dollars_off":  null,
+                      "percent_off":  null,
+                      "show_details":  true,
+                      "ttm_url":  "https://www.qfc.com/weeklyad/shoppable?cid=wc.pai.flipp_flipp-app-weeklyad_p:conv-promo_20260000_r:0_t:ent_b:all_e:0_f:0",
+                      "ttm_label":  "Shop Deal",
+                      "merchant":  "QFC",
+                      "merchant_id":  2807,
+                      "image_url":  "http://f.wishabi.net/page_pdf_images/24045988/c6760a8c-a7d7-11f1-b721-3a039d79c39c/x_large",
+                      "merchant_logo":  "http://images.wishabi.net/merchants/2807/1577115729/medium",
+                      "current_price":  "7.99",
+                      "original_price":  null,
+                      "flyer_disclaimer_text":  "",
+                      "flyer_valid_from":  "2026-09-16T00:00:00-04:00",
+                      "flyer_valid_to":  "2026-09-22T23:59:59-04:00",
+                      "review_average_rating":  null,
+                      "shipping_info":  {
+                                            "tag_line":  "",
+                                            "details_url":  ""
+                                        },
+                      "return_info":  {
+                                          "tag_line":  "",
+                                          "details_url":  ""
+                                      },
+                      "review_samples":  [
+
+                                         ],
+                      "reviews_most_recent":  [
+
+                                              ],
+                      "specs":  [
+
+                                ],
+                      "features":  [
+
+                                   ],
+                      "media":  [
+
+                                ]
+                  },
+                  {
+                      "id":  1038427936,
+                      "flyer_id":  8123483,
+                      "name":  "Cosmic Crisp, Envy or Pink Lady Apples",
+                      "display_type":  1,
+                      "brand":  null,
+                      "left":  29.72,
+                      "bottom":  -1134.86,
+                      "right":  500.65,
+                      "top":  -886.6,
+                      "cutout_image_url":  "http://f.wishabi.net/page_items/432989153/1788885201/extra_large.jpg",
+                      "valid_from":  "2026-09-16T00:00:00-04:00",
+                      "valid_to":  "2026-09-22T23:59:59-04:00",
+                      "description":  null,
+                      "pre_price_text":  null,
+                      "price_text":  "/lb With Card",
+                      "sale_story":  null,
+                      "in_store_only":  false,
+                      "disclaimer_text":  null,
+                      "sku":  null,
+                      "review_count":  0,
+                      "category":  "",
+                      "current_price_range":  null,
+                      "original_price_range":  null,
+                      "timezone":  -240,
+                      "related_items":  [
+
+                                        ],
+                      "shipping_info_title":  "",
+                      "dollars_off":  null,
+                      "percent_off":  null,
+                      "show_details":  true,
+                      "ttm_url":  "https://www.qfc.com/weeklyad/shoppable?cid=wc.pai.flipp_flipp-app-weeklyad_p:conv-promo_20260000_r:0_t:ent_b:all_e:0_f:0",
+                      "ttm_label":  "Shop Deal",
+                      "merchant":  "QFC",
+                      "merchant_id":  2807,
+                      "image_url":  "http://f.wishabi.net/page_items/432989153/1788885201/extra_large.jpg",
+                      "merchant_logo":  "http://images.wishabi.net/merchants/2807/1577115729/medium",
+                      "current_price":  "1.77",
+                      "original_price":  null,
+                      "flyer_disclaimer_text":  "",
+                      "flyer_valid_from":  "2026-09-16T00:00:00-04:00",
+                      "flyer_valid_to":  "2026-09-22T23:59:59-04:00",
+                      "review_average_rating":  null,
+                      "shipping_info":  {
+                                            "tag_line":  "",
+                                            "details_url":  ""
+                                        },
+                      "return_info":  {
+                                          "tag_line":  "",
+                                          "details_url":  ""
+                                      },
+                      "review_samples":  [
+
+                                         ],
+                      "reviews_most_recent":  [
+
+                                              ],
+                      "specs":  [
+
+                                ],
+                      "features":  [
+
+                                   ],
+                      "media":  [
+
+                                ]
+                  },
+                  {
+                      "id":  1038427929,
+                      "flyer_id":  8123483,
+                      "name":  "Fresh Draper Valley Boneless Chicken Breasts, Tenders, Thighs or Thin Cut Breasts",
+                      "display_type":  1,
+                      "brand":  "Draper Valley",
+                      "left":  460.12,
+                      "bottom":  -874.86,
+                      "right":  1015.43,
+                      "top":  -613.73,
+                      "cutout_image_url":  "http://f.wishabi.net/page_items/432989151/1788885200/extra_large.jpg",
+                      "valid_from":  "2026-09-16T00:00:00-04:00",
+                      "valid_to":  "2026-09-22T23:59:59-04:00",
+                      "description":  "Northwest Grown,\nVegetarian Fed\nmix \u0026 match",
+                      "pre_price_text":  null,
+                      "price_text":  null,
+                      "sale_story":  "BUY 1, GET 1 of Equal or Lesser Value FREE with card",
+                      "in_store_only":  false,
+                      "disclaimer_text":  null,
+                      "sku":  null,
+                      "review_count":  0,
+                      "category":  "",
+                      "current_price_range":  null,
+                      "original_price_range":  null,
+                      "timezone":  -240,
+                      "related_items":  [
+
+                                        ],
+                      "shipping_info_title":  "",
+                      "dollars_off":  null,
+                      "percent_off":  null,
+                      "show_details":  true,
+                      "ttm_url":  "https://www.qfc.com/weeklyad/shoppable?cid=wc.pai.flipp_flipp-app-weeklyad_p:conv-promo_20260000_r:0_t:ent_b:all_e:0_f:0",
+                      "ttm_label":  "Shop Deal",
+                      "merchant":  "QFC",
+                      "merchant_id":  2807,
+                      "image_url":  "http://f.wishabi.net/page_pdf_images/24045981/cd34d330-a7d7-11f1-822d-cea608ac3cc1/x_large",
+                      "merchant_logo":  "http://images.wishabi.net/merchants/2807/1577115729/medium",
+                      "current_price":  "",
+                      "original_price":  null,
+                      "flyer_disclaimer_text":  "",
+                      "flyer_valid_from":  "2026-09-16T00:00:00-04:00",
+                      "flyer_valid_to":  "2026-09-22T23:59:59-04:00",
+                      "review_average_rating":  null,
+                      "shipping_info":  {
+                                            "tag_line":  "",
+                                            "details_url":  ""
+                                        },
+                      "return_info":  {
+                                          "tag_line":  "",
+                                          "details_url":  ""
+                                      },
+                      "review_samples":  [
+
+                                         ],
+                      "reviews_most_recent":  [
+
+                                              ],
+                      "specs":  [
+
+                                ],
+                      "features":  [
+
+                                   ],
+                      "media":  [
+
+                                ]
+                  },
+                  {
+                      "id":  1039562699,
+                      "flyer_id":  8129241,
+                      "name":  "Broccoli or Cauliflower",
+                      "display_type":  1,
+                      "brand":  null,
+                      "left":  3666.52,
+                      "bottom":  -1700.49,
+                      "right":  3897.89,
+                      "top":  -1459.41,
+                      "cutout_image_url":  "http://f.wishabi.net/page_items/433409643/1789050999/extra_large.jpg",
+                      "valid_from":  "2026-09-16T00:00:00-04:00",
+                      "valid_to":  "2026-09-22T23:59:59-04:00",
+                      "description":  null,
+                      "pre_price_text":  null,
+                      "price_text":  "lb member price",
+                      "sale_story":  null,
+                      "in_store_only":  false,
+                      "disclaimer_text":  null,
+                      "sku":  null,
+                      "review_count":  0,
+                      "category":  "",
+                      "current_price_range":  null,
+                      "original_price_range":  null,
+                      "timezone":  -240,
+                      "related_items":  [
+
+                                        ],
+                      "shipping_info_title":  "",
+                      "dollars_off":  null,
+                      "percent_off":  null,
+                      "show_details":  true,
+                      "ttm_url":  null,
+                      "ttm_label":  "See It",
+                      "merchant":  "Safeway",
+                      "merchant_id":  5667,
+                      "image_url":  "http://f.wishabi.net/page_items/433409643/1789050999/extra_large.jpg",
+                      "merchant_logo":  "http://images.wishabi.net/merchants/5667/1538142558/medium",
+                      "current_price":  "2.49",
+                      "original_price":  null,
+                      "flyer_disclaimer_text":  "",
+                      "flyer_valid_from":  "2026-09-16T00:00:00-04:00",
+                      "flyer_valid_to":  "2026-09-22T23:59:59-04:00",
+                      "review_average_rating":  null,
+                      "shipping_info":  {
+                                            "tag_line":  "",
+                                            "details_url":  ""
+                                        },
+                      "return_info":  {
+                                          "tag_line":  "",
+                                          "details_url":  ""
+                                      },
+                      "review_samples":  [
+
+                                         ],
+                      "reviews_most_recent":  [
+
+                                              ],
+                      "specs":  [
+
+                                ],
+                      "features":  [
+
+                                   ],
+                      "media":  [
+
+                                ]
+                  },
+                  {
+                      "id":  1039561900,
+                      "flyer_id":  8129241,
+                      "name":  "Signature SELECT® Lean Ground Beef",
+                      "display_type":  1,
+                      "brand":  "Signature SELECT®",
+                      "left":  26.68,
+                      "bottom":  -1281.25,
+                      "right":  704.25,
+                      "top":  -953.23,
+                      "cutout_image_url":  "http://f.wishabi.net/page_items/433409071/1789051001/extra_large.jpg",
+                      "valid_from":  "2026-09-16T00:00:00-04:00",
+                      "valid_to":  "2026-09-22T23:59:59-04:00",
+                      "description":  "80% Sold in a 3 lb Twin Pack Brick for $14.97 ea",
+                      "pre_price_text":  null,
+                      "price_text":  "lb member price",
+                      "sale_story":  null,
+                      "in_store_only":  false,
+                      "disclaimer_text":  "Limit 1",
+                      "sku":  null,
+                      "review_count":  0,
+                      "category":  "",
+                      "current_price_range":  null,
+                      "original_price_range":  null,
+                      "timezone":  -240,
+                      "related_items":  [
+
+                                        ],
+                      "shipping_info_title":  "",
+                      "dollars_off":  null,
+                      "percent_off":  null,
+                      "show_details":  true,
+                      "ttm_url":  null,
+                      "ttm_label":  "See It",
+                      "merchant":  "Safeway",
+                      "merchant_id":  5667,
+                      "image_url":  "http://f.wishabi.net/page_pdf_images/24068694/1a4bf266-abe8-11f1-b339-924be7c52da0/x_large",
+                      "merchant_logo":  "http://images.wishabi.net/merchants/5667/1538142558/medium",
+                      "current_price":  "4.99",
+                      "original_price":  null,
+                      "flyer_disclaimer_text":  "",
+                      "flyer_valid_from":  "2026-09-16T00:00:00-04:00",
+                      "flyer_valid_to":  "2026-09-22T23:59:59-04:00",
+                      "review_average_rating":  null,
+                      "shipping_info":  {
+                                            "tag_line":  "",
+                                            "details_url":  ""
+                                        },
+                      "return_info":  {
+                                          "tag_line":  "",
+                                          "details_url":  ""
+                                      },
+                      "review_samples":  [
+
+                                         ],
+                      "reviews_most_recent":  [
+
+                                              ],
+                      "specs":  [
+
+                                ],
+                      "features":  [
+
+                                   ],
+                      "media":  [
+
+                                ]
+                  },
+                  {
+                      "id":  1039561931,
+                      "flyer_id":  8129241,
+                      "name":  "Tuscan, Cantaloupe, Honeydew Melon or Pineapple",
+                      "display_type":  1,
+                      "brand":  null,
+                      "left":  993.92,
+                      "bottom":  -430.8,
+                      "right":  1278.87,
+                      "top":  -181.26,
+                      "cutout_image_url":  "http://f.wishabi.net/page_items/433409077/1789051006/extra_large.jpg",
+                      "valid_from":  "2026-09-18T00:00:00-04:00",
+                      "valid_to":  "2026-09-18T23:59:59-04:00",
+                      "description":  null,
+                      "pre_price_text":  "2 for",
+                      "price_text":  "member price",
+                      "sale_story":  null,
+                      "in_store_only":  false,
+                      "disclaimer_text":  null,
+                      "sku":  null,
+                      "review_count":  0,
+                      "category":  "",
+                      "current_price_range":  null,
+                      "original_price_range":  null,
+                      "timezone":  -240,
+                      "related_items":  [
+
+                                        ],
+                      "shipping_info_title":  "",
+                      "dollars_off":  null,
+                      "percent_off":  null,
+                      "show_details":  true,
+                      "ttm_url":  null,
+                      "ttm_label":  "See It",
+                      "merchant":  "Safeway",
+                      "merchant_id":  5667,
+                      "image_url":  "http://f.wishabi.net/page_pdf_images/24068694/103ef372-abe8-11f1-b339-924be7c52da0/x_large",
+                      "merchant_logo":  "http://images.wishabi.net/merchants/5667/1538142558/medium",
+                      "current_price":  "5.0",
+                      "original_price":  null,
+                      "flyer_disclaimer_text":  "",
+                      "flyer_valid_from":  "2026-09-16T00:00:00-04:00",
+                      "flyer_valid_to":  "2026-09-22T23:59:59-04:00",
+                      "review_average_rating":  null,
+                      "shipping_info":  {
+                                            "tag_line":  "",
+                                            "details_url":  ""
+                                        },
+                      "return_info":  {
+                                          "tag_line":  "",
+                                          "details_url":  ""
+                                      },
+                      "review_samples":  [
+
+                                         ],
+                      "reviews_most_recent":  [
+
+                                              ],
+                      "specs":  [
+
+                                ],
+                      "features":  [
+
+                                   ],
+                      "media":  [
+
+                                ]
+                  }
+              ]
+}

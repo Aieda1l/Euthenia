@@ -1,0 +1,16 @@
+.codex/
+.superpowers/
+.worktrees/
+node_modules/
+dist/
+dist-core/
+data/audit/
+data/snapshots/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+.DS_Store

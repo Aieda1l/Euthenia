@@ -1,0 +1,76 @@
+{
+  "research_date": "2026-09-18",
+  "postal_code": "98105",
+  "evidence": "Live Invoke-RestMethod read-only requests, each successful exit code 0 after sandbox network escalation. Not normalized/validated shopping offers.",
+  "listing_url": "https://backflipp.wishabi.com/flipp/flyers?postal_code=98105",
+  "sources": [
+    {
+      "merchant": "QFC",
+      "flyer_id": 8123483,
+      "item_count": 148,
+      "detail_url": "https://backflipp.wishabi.com/flipp/flyers/8123483?postal_code=98105",
+      "samples": [
+        {
+          "id": 1038428171,
+          "name": "Certified Angus Beef Ground Chuck",
+          "price": "7.99",
+          "valid_from": "2026-09-16T00:00:00-04:00",
+          "valid_to": "2026-09-22T23:59:59-04:00",
+          "available_to": "2026-09-22T23:59:59-04:00",
+          "text_areas": []
+        },
+        {
+          "id": 1038427936,
+          "name": "Cosmic Crisp, Envy or Pink Lady Apples",
+          "price": "1.77",
+          "valid_from": "2026-09-16T00:00:00-04:00",
+          "valid_to": "2026-09-22T23:59:59-04:00",
+          "available_to": "2026-09-22T23:59:59-04:00",
+          "text_areas": []
+        }
+      ]
+    },
+    {
+      "merchant": "Safeway",
+      "flyer_id": 8129241,
+      "item_count": 151,
+      "detail_url": "https://backflipp.wishabi.com/flipp/flyers/8129241?postal_code=98105",
+      "samples": [
+        {
+          "id": 1039562699,
+          "name": "Broccoli or Cauliflower",
+          "price": "2.49",
+          "valid_from": "2026-09-16T00:00:00-04:00",
+          "valid_to": "2026-09-22T23:59:59-04:00",
+          "available_to": "2026-09-22T23:59:59-04:00",
+          "text_areas": []
+        },
+        {
+          "id": 1039561931,
+          "name": "Tuscan, Cantaloupe, Honeydew Melon or Pineapple",
+          "price": "5.0",
+          "valid_from": "2026-09-18T00:00:00-04:00",
+          "valid_to": "2026-09-18T23:59:59-04:00",
+          "available_to": "2026-09-22T23:59:59-04:00",
+          "text_areas": []
+        },
+        {
+          "id": 1039561900,
+          "name": "Signature SELECT® Lean Ground Beef",
+          "price": "4.99",
+          "valid_from": "2026-09-16T00:00:00-04:00",
+          "valid_to": "2026-09-22T23:59:59-04:00",
+          "available_to": "2026-09-22T23:59:59-04:00",
+          "text_areas": []
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Units/minimum purchases/coupon conditions not established from these rows",
+    "Raw offset -04:00 needs printed Seattle date interpretation validation",
+    "available_to differs from valid_to on a short-lived offer",
+    "No physical branch applicability or stock validation",
+    "No third-party code executed"
+  ]
+}

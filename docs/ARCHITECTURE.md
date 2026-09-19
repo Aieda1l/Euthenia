@@ -4,7 +4,7 @@
 
 As of 2026-09-18 there is no application, package manifest, database, installed collector, scheduler, frontend, or deployment in this directory. Existing material is project configuration/instructions and documentation.
 
-Git status/history probes report that this directory is not a Git repository. No version-control baseline or application verification command can be claimed.
+The initial 2026-09-18 probes found no Git repository. On 2026-09-19 execution setup initialized Git and committed the approved docs/instructions. Linked execution worktrees now exist, but the required Sol High runtime is blocked before product code creation. No application verification command exists yet.
 
 ## Established constraints
 

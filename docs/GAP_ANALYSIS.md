@@ -4,7 +4,7 @@ Evidence baseline: 2026-09-18. Documentation templates existed; no app/manifests
 
 | Gap | Evidence | Smallest next step | State |
 |---|---|---|---|
-| M1 execution review | User approved spec; fresh Sol High planner produced a four-task plan integrated by orchestrator | User reviews concrete active plan | Pending |
+| Sol High execution runtime | User approved spec and plan; three implementation attempts rejected trusted cwd/root context before producing code | Restore the configured route, then resume approved Task 1 | Blocked |
 | Reliable local price coverage | Live QFC/Safeway Flipp requests returned 148/151 items; PCC page readable; units, conditions and local applicability not yet verified | Validate two retailer chains and five matching pairs | Open |
 | Windows application | No source, manifest or installer | Plan/build source-backed deal-list slice after design approval | Open |
 | Comparison and rating accuracy | Rules specified; no executable implementation | Deterministic normalization/matching fixtures | Open |

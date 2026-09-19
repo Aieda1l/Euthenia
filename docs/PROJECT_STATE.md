@@ -2,36 +2,34 @@
 
 ## Current objective
 
-Build Euthenia: a Windows grocery deal app for a UW Seattle student, prioritizing produce/meat, comparable competitor prices, radius/store-count/aggression controls, weekly digests and optional immediate email/SMS alerts.
+Build Euthenia: a Windows grocery deal app for a UW Seattle student, prioritizing produce/meat, comparable competitor prices, radius/store/aggression controls, weekly digests and optional immediate email/SMS.
 
 ## Active milestone
 
 - **Milestone:** M1 - Trustworthy local deals in a Windows window.
-- **Status:** User approved both the written specification and M1 implementation plan on 2026-09-19. Task 1 execution starting.
-- **Active plan:** [2026-09-19-m1-windows-deal-comparison.md](plans/active/2026-09-19-m1-windows-deal-comparison.md).
-- **Review artifacts:** [MVP_SPEC.md](MVP_SPEC.md), [DATA_RESEARCH.md](DATA_RESEARCH.md).
+- **Status:** Specification and implementation plan approved on 2026-09-19. Execution blocked by required Sol High runtime before product code could be created.
+- **Active plan:** [M1 implementation plan](plans/active/2026-09-19-m1-windows-deal-comparison.md).
+- **No further design or plan approval is needed.**
 
 ## Last verified state
 
-- No Git repository, application source, package manifest, installer, deployment or configured notification providers. No canonical application build/test/lint commands exist.
-- Live approved read-only Flipp probes for 98105 returned QFC flyer 8123483 (148 items) and Safeway 8129241 (151 items). Samples saved under research/.
-- These are raw observations: units/conditions/branch applicability not validated; raw -04:00 dates and differing valid_to/available_to require care.
-- Nine authored docs passed parent file/link/placeholder checks (exit 0); evidence JSON parses with 2 sources and 2/3 sample rows.
-- Fresh quality review and corrective spec follow-up reported no blocking findings. Independent doc verifier reported 36 passes, 0 failures. No application/runtime checks are claimed.
-- Detailed evidence: [research/VERIFICATION_2026-09-18.md](research/VERIFICATION_2026-09-18.md).
-- 2026-09-19: six item-detail responses retrieved successfully, exposing unit/member/package/limit fields; two flyer cutouts visually corroborated. Data remains below the full ten-per-chain/five-pair gate.
-- Installed Node 22.23.2/npm 12.0.2/Git 2.55.0 verified; candidate engine metadata inspected. No dependencies installed. Planning evidence: [M1 preflight](research/M1_PLANNING_PREFLIGHT_2026-09-19.md).
+- Git initialized at the original D:/cyrus/OneDrive/Projects/Euthenia repository; approved docs/instructions committed in baseline efe6c1b.
+- Active linked checkout: C:/Users/cyrus/.codex-worktrees/Euthenia-m1, branch codex/m1-implementation. An unused earlier D: checkout remains on codex/m1-source-proof; it contains no production changes.
+- No package.json, application source, dependencies, installer, deployment or configured notification providers. No application tests could be run.
+- Read-only Flipp probes returned current QFC/Safeway ads and six detailed sample records. Units, membership/package/limit text are exposed. Two cutouts were visually checked.
+- Actual ten-per-chain/five-comparable-pair source gate has not passed. No runtime behavior or live delivery is claimed.
 
-## Decisions / remaining constraints
+## Blocker
 
-- User requested research of both local and hosted scheduling. Recommend one hosted collector/scheduler and a Windows client, with provisional $6-12/month hosting before messaging/domain costs. No spend approved.
-- Instacart extraction permitted by user when accurate; retain actual channel, store and session-location context.
-- One-comparator ratings must name that comparator and show limited coverage. Missing units/attributes/eligibility cannot become automated savings claims.
-- Sol High research and documentation-editing children each encountered a harness error: missing cwd in trusted environment context. No alternate child model used. Partial documentation edits were inspected and integrated; later reviewers/verifier on the same required route succeeded.
-- On 2026-09-19 two planner attempts on that same route failed with the missing-cwd harness error and produced no file. A third fresh planner successfully returned plan text from directly supplied context without filesystem calls. The orchestrator reviewed, reduced and saved it. Future child filesystem execution still needs verification; no alternate model was used.
+Three fresh chatgpt-web/high implementation attempts returned:
+`stream disconnected before completion: ChatGPT web cwd is outside the trusted Codex workspace roots`
+
+Attempts covered the original D: worktree, a new C: worktree under the latest stated trusted root, and a text-only no-tools handoff. No application patch was produced. No child model was substituted.
+
+Details and useful source findings: [execution blocker/evidence](research/M1_EXECUTION_BLOCKER_2026-09-19.md).
 
 ## Next action
 
-Live execution is in C:/Users/cyrus/.codex-worktrees/Euthenia-m1 on branch codex/m1-implementation. Read that checkout's docs/PROJECT_STATE.md for current status. Sol High child filesystem calls are blocked by the harness, so children author patches from supplied context and the orchestrator applies/runs them. The original D: repository is the integration destination. No source-validation criterion is waived.
+When the required Sol High route can execute, resume Task 1 from the approved plan in the active C: checkout. Its scratch ledger/brief are under .superpowers/sdd/2026-09-19-m1-windows-deal-comparison/. Use fresh implementers, separate spec/quality reviewers and a verifier. The parent applies/integrates changes only within the authorized workflow. Do not repeat completed research or request product approval again.
 
-No product code, paid services, external accounts or real notifications have been created.
+Task 1's live source-proof gate remains mandatory before comparisons/UI tasks. No paid services, external accounts or real messages have been created.

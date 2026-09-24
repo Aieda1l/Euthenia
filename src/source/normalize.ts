@@ -105,7 +105,8 @@ const N_FOR = /(?<![\d.])(0|[1-9]\d*) for\b/;
 const MAX_MULTI_BUY = 100;
 const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
 const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
-const PACKAGE_TOTAL = /(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b[^$]*?\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d)/i;
+// N4: the amount may not continue with a digit or ".", so "$14.975" never parses as $14.
+const PACKAGE_TOTAL = /(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b[^$]*?\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?![\d.])/i;
 const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?\s*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
 const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bpints?\b/, "pint"],
@@ -127,8 +128,9 @@ const LOYALTY_MEMBER = /\bmembers?(?: only)?(?: prices?| pricing| deals?| specia
 /**
  * A5: the only wording pre_price_text and price_text may contain beside
  * punctuation: lb/each bases, "N for", and loyalty or member phrases. Any
- * leftover wording or digits ("2/", "Starting at", "Save", "Up to", "BOGO",
- * "off", coupon wording) makes the unit price unknown.
+ * leftover wording, digits or money signs ("2/", "Starting at", "Save", "Up
+ * to", "BOGO", "off", coupon wording, and N3: "¢", "$", "%") makes the unit
+ * price unknown.
  */
 const PRICE_VOCABULARY: readonly RegExp[] = [
   new RegExp(N_FOR.source, "g"),
@@ -145,7 +147,7 @@ function priceWordingIssues(item: Record<string, unknown>): string[] {
     if (value === null) continue;
     let rest = normalizeText(value);
     for (const pattern of PRICE_VOCABULARY) rest = rest.replace(pattern, " ");
-    const leftover = rest.replace(/[^a-z0-9]+/g, " ").trim();
+    const leftover = rest.replace(/[^a-z0-9¢$%]+/g, " ").trim();
     if (leftover.length > 0) issues.push(`unrecognized ${field} wording ${JSON.stringify(value)} ("${leftover}"); unit price unknown`);
   }
   for (const field of ["dollars_off", "percent_off"] as const) {
@@ -294,7 +296,7 @@ function normalizeUnits(item: Record<string, unknown>): Units {
 
 interface ConditionState {
   loyalty: Set<boolean>;
-  coupon: boolean;
+  coupon: Set<boolean>;
   minimum: Set<number>;
   maximum: Set<number>;
 }
@@ -306,7 +308,10 @@ const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (groups: MatchGroups, sta
   [LOYALTY_WITH_CARD, (_, s) => s.loyalty.add(true)],
   [LOYALTY_CARD_PRICE, (_, s) => s.loyalty.add(true)],
   [LOYALTY_MEMBER, (_, s) => s.loyalty.add(true)],
-  [/\b(?:with )?(?:digital )?coupons?(?: required)?\b/g, (_, s) => { s.coupon = true; }],
+  // N1: "no coupon required/needed" and "coupon not required" say no coupon.
+  [/\b(?:no (?:digital )?coupons?(?: (?:needed|required|necessary))?|(?:digital )?coupons? not (?:needed|required|necessary))\b/g,
+    (_, s) => s.coupon.add(false)],
+  [/\b(?:with )?(?:digital )?coupons?(?: required)?\b/g, (_, s) => s.coupon.add(true)],
   [/\blimit (\d+)(?: per (?:household|customer|transaction|order|day|visit))?\b/g, (g, s) => s.maximum.add(Number(g[1]))],
   [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b/g, (g, s) => s.minimum.add(Number(g[1]))],
   [/\b\d+ for\b/g, () => undefined],
@@ -332,7 +337,7 @@ function applyConditionRules(segment: string, state: ConditionState): string {
 }
 
 function parseConditions(item: Record<string, unknown>): Conditions {
-  const state: ConditionState = { loyalty: new Set(), coupon: false, minimum: new Set(), maximum: new Set() };
+  const state: ConditionState = { loyalty: new Set(), coupon: new Set(), minimum: new Set(), maximum: new Set() };
   const kept: string[] = [];
   let complete = true;
 
@@ -355,6 +360,8 @@ function parseConditions(item: Record<string, unknown>): Conditions {
 
   const loyaltyRequired = state.loyalty.size === 1 ? [...state.loyalty][0] ?? null : null;
   if (state.loyalty.size > 1) complete = false;
+  const couponRequired = state.coupon.size === 1 ? [...state.coupon][0] ?? null : null;
+  if (state.coupon.size > 1) complete = false;
   const minimumUnits = state.minimum.size === 1 ? [...state.minimum][0] ?? null : null;
   if (state.minimum.size > 1) complete = false;
   const maximumUnits = state.maximum.size === 1 ? [...state.maximum][0] ?? null : null;
@@ -363,7 +370,7 @@ function parseConditions(item: Record<string, unknown>): Conditions {
   return {
     complete,
     loyaltyRequired,
-    couponRequired: state.coupon ? true : null,
+    couponRequired,
     couponIds: [],
     minimumUnits,
     maximumUnits,

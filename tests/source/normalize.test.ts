@@ -439,3 +439,44 @@ describe("list-row classification (R2)", () => {
     expect(() => normalize(record)).toThrow(/excluded/);
   });
 });
+
+describe("second fix round: price wording, package totals and coupons (synthetic)", () => {
+  it("N1: 'no coupon required' wording gives couponRequired false, not true", () => {
+    expect(normalize(synthetic({ price_text: "ea", description: "No coupon required" })).conditions)
+      .toMatchObject({ couponRequired: false, complete: true });
+    expect(normalize(synthetic({ price_text: "ea", sale_story: "No digital coupon needed" })).conditions)
+      .toMatchObject({ couponRequired: false, complete: true });
+    expect(normalize(synthetic({ price_text: "ea", sale_story: "Coupon not required" })).conditions)
+      .toMatchObject({ couponRequired: false, complete: true });
+  });
+
+  it("N1: contradictory coupon statements leave couponRequired null and incomplete", () => {
+    const offer = normalize(synthetic({ price_text: "ea", sale_story: "Digital coupon required", description: "No coupon needed" }));
+    expect(offer.conditions).toMatchObject({ couponRequired: null, complete: false });
+  });
+
+  it.each([
+    ["¢ in price_text", { price_text: "¢ lb", current_price: "99" }, /price_text.*"¢ lb".*\("¢"\)/],
+    ["$ in pre_price_text", { pre_price_text: "$", price_text: "lb" }, /pre_price_text.*"\$"/],
+    ["% in price_text", { price_text: "% lb" }, /price_text.*"% lb"/],
+  ])("N3: %s is leftover wording, so the unit price is null", (_label, fields, issue) => {
+    const offer = normalize(synthetic(fields));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(issue);
+  });
+
+  it("N4: a package total with more than two decimals never parses as a truncated amount", () => {
+    const offer = normalize(synthetic({ name: "Fresh 80% Lean Ground Beef", description: "3 lb pack for $14.975", price_text: "lb", current_price: "4.99" }));
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    // The unparsed amount still marks the conditions incomplete.
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it("N6 (pinned): pre_price_text \"2\" with price_text \"for\" gives a null unit price with an issue", () => {
+    const offer = normalize(synthetic({ pre_price_text: "2", price_text: "for", current_price: "5.00" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/pre_price_text wording "2"/);
+    expect(offer.normalizationIssue).toMatch(/price_text wording "for"/);
+  });
+});

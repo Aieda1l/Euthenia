@@ -454,3 +454,196 @@ describe("comparisonKey enforces documented rules", () => {
     }
   });
 });
+
+describe("F1: leftover cut-part and portion words keep different cuts apart", () => {
+  it("cross rib roast is its own cut, never a rib roast", () => {
+    const rib = meat("Fresh Boneless Beef Rib Roast");
+    const cross = meat("Fresh Boneless Beef Cross Rib Roast");
+    // "Chuck cross rib roast" is the full standard name of the same cut.
+    const chuckCross = meat("USDA Choice Beef Chuck Cross Rib Roast", "Fresh, Boneless");
+    expect(rib).toMatchObject({ cut: known("rib roast") });
+    expect(cross).toMatchObject({ cut: known("cross rib roast") });
+    expect(chuckCross).toMatchObject({ cut: known("cross rib roast") });
+    expect(comparisonKey(rib)).not.toBeNull();
+    expect(comparisonKey(cross)).not.toBeNull();
+    expect(comparisonKey(chuckCross)).not.toBeNull();
+    expect(comparisonKey(cross)).not.toBe(comparisonKey(rib));
+    expect(comparisonKey(chuckCross)).not.toBe(comparisonKey(rib));
+  });
+
+  it.each([
+    ["Fresh Boneless Beef Chuck Eye Roast", "Fresh Boneless Beef Sirloin Roast"],
+    ["Fresh Boneless Beef Chuck Arm Roast", "Fresh Boneless Beef Round Tip Roast"],
+  ])("%j and %j never share a key", (left, right) => {
+    for (const name of [left, right]) {
+      const identity = meat(name);
+      expect(identity).toMatchObject({ species: known("beef"), cut: unknown });
+      expect(comparisonKey(identity)).toBeNull();
+    }
+  });
+
+  it("chicken breast strips never share a key with whole breasts", () => {
+    const strips = meat("Fresh Boneless Skinless Chicken Breast Strips");
+    const breasts = meat("Fresh Boneless Skinless Chicken Breasts");
+    expect(strips).toMatchObject({ species: known("chicken"), cut: unknown });
+    expect(comparisonKey(strips)).toBeNull();
+    expect(breasts).toMatchObject({ cut: known("breast") });
+    expect(comparisonKey(breasts)).not.toBeNull();
+  });
+
+  it.each([
+    "Fresh Boneless Beef Bottom Round Steak",
+    "Fresh Boneless Beef Petite Sirloin Steak",
+    "Fresh Boneless Skinless Chicken Breast Fillets",
+    "Fresh Boneless Skinless Chicken Breast Bites",
+    "Fresh Boneless Pork Belly Slices",
+    "Fresh Bone-In Skin-On Chicken Wing Flats",
+    "Fresh Whole Chicken Cut Up",
+  ])("a leftover part or portion word makes %j unknown", (name) => {
+    const identity = meat(name);
+    expect(identity).toMatchObject({ cut: unknown });
+    expect(comparisonKey(identity)).toBeNull();
+  });
+
+  it("generic steak, roast, ribs and chops classify as meat but never key", () => {
+    for (const name of [
+      "Fresh Boneless Beef Steak", "Fresh Boneless Beef Roast", "Fresh Bone-In Pork Ribs",
+      "Fresh Boneless Pork Chops", "Fresh Bone-In Pork Chops", "Fresh Bone-In Lamb Chops",
+    ]) {
+      const identity = meat(name);
+      expect(identity).toMatchObject({ cut: unknown });
+      expect(comparisonKey(identity)).toBeNull();
+    }
+  });
+
+  it("a longer vocabulary phrase that consumes these words stays a known, distinct cut", () => {
+    const cuts: Array<[string, string]> = [
+      ["Fresh Boneless Beef Top Sirloin Steak", "top sirloin steak"],
+      ["Fresh Boneless Beef Sirloin Steak", "sirloin steak"],
+      ["Fresh Boneless Beef Sirloin Tip Roast", "sirloin tip roast"],
+      ["Fresh Boneless Beef Chuck Eye Steak", "chuck eye steak"],
+      ["Fresh Boneless Beef Eye of Round Roast", "eye of round roast"],
+      ["Fresh Boneless Beef Top Round Steak", "top round steak"],
+      ["Fresh Boneless Beef Bottom Round Roast", "bottom round roast"],
+      ["Fresh Boneless Pork Loin Chops", "loin chop"],
+    ];
+    const keys = new Set<string | null>();
+    for (const [name, cut] of cuts) {
+      const identity = meat(name);
+      expect(identity).toMatchObject({ cut: known(cut) });
+      expect(comparisonKey(identity)).not.toBeNull();
+      keys.add(comparisonKey(identity));
+    }
+    expect(keys.size).toBe(cuts.length);
+    expect(meat("Fresh Beef Ground Round 85/15")).toMatchObject({ cut: known("ground round"), fatPercent: known(15) });
+  });
+});
+
+describe("F2: celery root and stalk items", () => {
+  it("celery root is its own kind, with no variety rule, so it never keys", () => {
+    for (const name of ["Organic Celery Root", "Organic Celeriac", "Organic Celery Roots"]) {
+      const identity = produce(name);
+      expect(identity).toMatchObject({ kind: known("celery root"), variety: unknown });
+      expect(comparisonKey(identity)).toBeNull();
+    }
+    expect(comparisonKey(produce("Organic Celery"))).not.toBeNull();
+    expect(produce("Organic Ginger Root")).toMatchObject({ kind: known("ginger") });
+  });
+
+  it("Brussels sprouts on the stalk never key as loose Brussels sprouts", () => {
+    expect(classifyText("Organic Brussels Sprouts on the Stalk"))
+      .toMatchObject({ category: "excluded", reason: expect.stringMatching(/not the head.*stalk/) });
+    expect(comparisonKey(produce("Organic Brussels Sprouts"))).not.toBeNull();
+  });
+});
+
+describe("F3: organic exclusion wording and one segmentation", () => {
+  it.each([
+    ["Strawberries, Excl. Organic", undefined],
+    ["Strawberries, Organic Excluded", undefined],
+    ["Organic Strawberries", "Organic not eligible"],
+    ["Organic Strawberries", "Organics excepted"],
+    ["Organic Strawberries", "Organic not included"],
+    ["Organic Strawberries", "Excl organic 2 lb"],
+  ])("%j with description %j gives organic unknown and no key", (name, description) => {
+    const identity = produce(name, description);
+    expect(identity).toMatchObject({ kind: known("strawberry"), organic: unknown });
+    expect(comparisonKey(identity)).toBeNull();
+  });
+
+  it("a comma segment cannot escape the head-noun rule", () => {
+    for (const name of ["Organic Garlic, Butter", "Organic Lemons, Curd"]) {
+      expect(classifyText(name)).toMatchObject({ category: "excluded", reason: expect.stringMatching(/not the head/) });
+    }
+    expect(produce("Russet Potatoes, 5 lb Bag")).toMatchObject({ kind: known("potato"), variety: known("russet") });
+    expect(produce("Organic Lettuce, Butter")).toMatchObject({ kind: known("lettuce"), variety: known("butter") });
+  });
+});
+
+describe("N2: only the resolved kind's variety words may follow it", () => {
+  it("another kind's variety word after the kind excludes the item", () => {
+    expect(classifyText("Organic Garlic Butter"))
+      .toMatchObject({ category: "excluded", reason: expect.stringMatching(/not the head.*butter/) });
+    expect(produce("Organic Butter Lettuce")).toMatchObject({ kind: known("lettuce"), variety: known("butter") });
+    expect(produce("Organic Tomatoes on the Vine")).toMatchObject({ variety: known("on the vine") });
+  });
+});
+
+describe("N5: A3 catches organically raised and grown meat", () => {
+  it.each([
+    "Fresh Organically Raised Chicken Thighs",
+    "Organically Grown Boneless Skinless Chicken Breasts",
+  ])("%j is excluded", (name) => {
+    expect(classifyText(name)).toMatchObject({ category: "excluded", reason: expect.stringMatching(/production claim not in M1 identity contract/) });
+  });
+});
+
+describe("F4: comparisonKey accepts only documented variety, form and cut values", () => {
+  const apple: Identity = { category: "produce", kind: known("apple"), variety: known("gala"), form: known("whole"), organic: known(true) };
+  const thigh: Identity = {
+    category: "meat", species: known("chicken"), cut: known("thigh"), bone: known("out"),
+    skin: known("off"), freshFrozen: known("fresh"), fatPercent: na,
+  };
+
+  it("rejects ill-formed strings without throwing", () => {
+    expect(comparisonKey(apple)).not.toBeNull();
+    expect(comparisonKey(thigh)).not.toBeNull();
+    for (const identity of [
+      { ...apple, variety: known("\ud800") },
+      { ...apple, form: known("\udfff") },
+      { ...thigh, cut: known("thigh\ud800") },
+    ] as Identity[]) {
+      expect(() => comparisonKey(identity)).not.toThrow();
+      expect(comparisonKey(identity)).toBeNull();
+    }
+    expect(identityGaps({ ...apple, variety: known("\ud800") })).toEqual(["variety"]);
+  });
+
+  it("rejects values outside the vocabulary, including another kind's variety", () => {
+    expect(comparisonKey({ ...apple, variety: known("yukon gold") })).toBeNull();
+    expect(comparisonKey({ ...apple, variety: known("gala ") })).toBeNull();
+    expect(comparisonKey({ ...apple, form: known("smashed") })).toBeNull();
+    expect(comparisonKey({ ...thigh, cut: known("thigh bone") })).toBeNull();
+    expect(comparisonKey({ ...thigh, cut: known("?") })).toBeNull();
+    expect(identityGaps({ ...thigh, cut: known("steak") })).toContain("cut");
+  });
+
+  it("every variety the rules derive, including implied and templated ones, still keys", () => {
+    const names: Array<[string, string]> = [
+      ["Organic Grape Tomatoes", "grape"],
+      ["Organic Red Bell Peppers", "red bell"],
+      ["Organic Romaine Lettuce", "romaine"],
+      ["Organic Red Seedless Grapes", "red seedless"],
+      ["Organic Black Grapes", "black"],
+      ["Organic Yellow Onions", "yellow"],
+      ["Organic Bi-Color Corn", "bi-color"],
+      ["Organic Honey Crisp Apples", "honeycrisp"],
+      ["Organic Baby Bella Mushrooms", "cremini"],
+    ];
+    for (const [name, variety] of names) {
+      const identity = produce(name);
+      expect(identity).toMatchObject({ variety: known(variety) });
+      expect(comparisonKey(identity)).not.toBeNull();
+    }
+  });
+});

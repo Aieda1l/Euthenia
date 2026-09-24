@@ -19,12 +19,18 @@ import {
   evaluateProof,
 } from "../../src/source/proof.js";
 
-// SYNTHETIC proof fixtures. They use R7-shaped IDs (flipp:item:<id>:<hash>
-// and flipp:<family>:<id>) and backflipp item retrievedUrls so the proof's
-// identity checks apply to them, but they were never collected: source item
-// IDs sit in reserved synthetic ranges (9100000000+ kroger, 9200000000+
-// albertsons, 9300000000+ pcc), raw hashes are of the text "synthetic body
-// <id>", and sourceUrls use example.invalid. They never count as live evidence.
+// SYNTHETIC proof fixtures, for exercising evaluateProof only. They are built
+// to pass the gate: R7-shaped IDs (flipp:item:<id>:<hash> and
+// flipp:<family>:<id>), backflipp item retrievedUrls and complete validation
+// records. evaluateProof checks that shape and the ID/hash agreement; it
+// fetches nothing and does not check the sourceUrl host, so inside these
+// tests the offers do count. They are not live evidence because nothing was
+// collected: the source item IDs are invented in reserved ranges (9100000000+
+// kroger, 9200000000+ albertsons, 9300000000+ pcc), each rawSha256 hashes the
+// placeholder text "synthetic body <id>" rather than a Flipp response, the
+// example.invalid sourceUrls resolve nowhere, and the validations were written
+// by the test, not by a person checking a printed ad. They must never appear
+// in a snapshot or in docs/research/M1_SOURCE_PROOF.md.
 
 const NOW = new Date("2026-09-24T19:00:00.000Z");
 const OBSERVED_AT = "2026-09-24T12:00:00.000Z";
@@ -388,6 +394,16 @@ describe("checkProof failure matrix (synthetic)", () => {
     expect(result.reasons.join("\n")).toMatch(/validation references unknown offer flipp:kroger:9199999999/);
   });
 
+  it("N8: a validation naming a nonexistent offer is a note, not a failure", () => {
+    const snap = snapshot();
+    snap.proof.validations.push({ ...validationFor(offer(snap, K0)), offerId: "flipp:kroger:9199999999" });
+    const evaluation = evaluateProof(snap, NOW);
+    expect(evaluation.ok).toBe(true);
+    expect(evaluation.failures).toEqual([]);
+    expect(evaluation.notes).toEqual(["validation references unknown offer flipp:kroger:9199999999"]);
+    expect(evaluation.reasons).toEqual(evaluation.notes);
+  });
+
   it("duplicate offer IDs are excluded as ambiguous", () => {
     const snap = snapshot();
     snap.offers.push(makeOffer("kroger", itemId("kroger", 0), IDENTITIES[0]!));
@@ -546,6 +562,8 @@ describe("A7: R7 identity enforcement (synthetic)", () => {
       extra(9, { identity: { ...chickenBreast, bone: known("sideways") } }),
       extra(10, { identity: { ...chickenBreast, skin: undefined } }),
       extra(11, { id: 42 }),
+      // F4: well-shaped, but its variety is an ill-formed string (a lone surrogate).
+      extra(12, { identity: { category: "produce", kind: known("apple"), variety: known("\ud800"), form: known("whole"), organic: known(true) } }),
     ];
     snap.offers.push(...malformed);
     snap.proof.validations.push(
@@ -569,6 +587,7 @@ describe("A7: R7 identity enforcement (synthetic)", () => {
     expect(reasons).toMatch(/channel "telepathy"/);
     expect(reasons).toMatch(/validations\[20\] is malformed/);
     expect(reasons).toMatch(/pairs\[5\] is malformed/);
+    expect(exclusion(snap, offerId("kroger", 32))).toMatch(/no comparisonKey \(unknown or unsupported identity fields: variety\)/);
     expect(() => checkProof(snap, NOW)).not.toThrow();
   });
 

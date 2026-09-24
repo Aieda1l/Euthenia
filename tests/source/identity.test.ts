@@ -682,3 +682,56 @@ describe("F4: comparisonKey accepts only documented variety, form and cut values
     }
   });
 });
+
+describe("fail-closed round: cut words and alternatives in the description (F3, F4)", () => {
+  it.each([
+    ["Fresh Boneless Beef Brisket", "Point Cut"],
+    ["Fresh Boneless Beef Brisket", "Deckle"],
+    ["Fresh Bone-In Beef Ribeye Steak", "Tomahawk"],
+    ["Fresh Bone-In Skin-On Chicken Wings", "Drummettes"],
+  ])("F3: %j with the description %j never shares the plain-cut key", (name, description) => {
+    const plain = meat(name);
+    expect(comparisonKey(plain)).not.toBeNull();
+    const described = meat(name, description);
+    expect(described).toMatchObject({ cut: unknown });
+    expect(comparisonKey(described)).toBeNull();
+  });
+
+  it.each([
+    // Live text (QFC item 1039881032, 2026-09-24 run).
+    "New York Strip Steaks",
+    "Fresh Beef New York Strip Steaks",
+  ])("F4: %j with alternatives in the description has cut unknown and never keys", (name) => {
+    const identity = meat(name, "or Boneless Chuck Roasts or Steaks");
+    expect(identity).toMatchObject({ cut: unknown });
+    expect(comparisonKey(identity)).toBeNull();
+  });
+
+  it("F4: a description alternative naming another species or kind makes that field unknown", () => {
+    const poultry = meat("Fresh Boneless Skinless Chicken Thighs", "or Turkey Thighs");
+    expect(poultry).toMatchObject({ species: unknown });
+    expect(comparisonKey(poultry)).toBeNull();
+    const greens = produce("Organic Broccoli", "or Cauliflower");
+    expect(greens).toMatchObject({ kind: unknown });
+    expect(comparisonKey(greens)).toBeNull();
+    expect(produce("Organic Broccoli", "Cauliflower & Kale")).toMatchObject({ kind: unknown });
+    expect(meat("Fresh Boneless Beef New York Strip Steaks", "Steaks/Roasts")).toMatchObject({ cut: unknown });
+  });
+
+  it("F4: a description alternative naming another variety of the same kind makes variety unknown", () => {
+    const apples = produce("Organic Gala Apples", "or Fuji");
+    expect(apples).toMatchObject({ kind: known("apple"), variety: unknown });
+    expect(comparisonKey(apples)).toBeNull();
+    const same = produce("Organic Gala Apples", "Gala or Gala");
+    expect(same).toMatchObject({ variety: known("gala") });
+  });
+
+  it("F4: an alternation that names no other vocabulary value leaves the fields known", () => {
+    const steak = meat("Fresh Boneless Beef New York Strip Steaks", "Great for grilling or broiling");
+    expect(steak).toMatchObject({ species: known("beef"), cut: known("strip steak") });
+    expect(comparisonKey(steak)).not.toBeNull();
+    const berries = produce("Organic Strawberries", "Sweet and juicy");
+    expect(berries).toMatchObject({ kind: known("strawberry") });
+    expect(comparisonKey(berries)).not.toBeNull();
+  });
+});

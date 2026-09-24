@@ -438,6 +438,30 @@ describe("item collection", () => {
     expectPriorSnapshotPreserved();
   });
 
+  it.each<[string, (record: Record<string, unknown>) => Record<string, unknown>, RegExp]>([
+    ["missing", (record) => {
+      const copy = { ...record };
+      delete copy.flyer_id;
+      return copy;
+    }, /schema: item detail flyer_id is missing/],
+    ["null", (record) => ({ ...record, flyer_id: null }), /schema: item detail flyer_id null is not an integer/],
+    ["a numeric string", (record) => ({ ...record, flyer_id: String(SAFEWAY_FLYER) }), new RegExp(`schema: item detail flyer_id "${SAFEWAY_FLYER}" is not an integer`)],
+    ["a one-element array", (record) => ({ ...record, flyer_id: [SAFEWAY_FLYER] }), new RegExp(`schema: item detail flyer_id \\[${SAFEWAY_FLYER}\\] is not an integer`)],
+    ["a fraction", (record) => ({ ...record, flyer_id: SAFEWAY_FLYER + 0.5 }), new RegExp(`schema: item detail flyer_id ${SAFEWAY_FLYER}\\.5 is not an integer`)],
+  ])("F5: an item detail whose flyer_id is %s is a run-level schema error", async (_label, change, message) => {
+    seedPriorSnapshot();
+    const world = fixtureWorld();
+    const id = SAFEWAY_ITEMS[0];
+    world.map.set(itemUrl(id), JSON.stringify({ item: change(item(id)) }));
+    const result = await run(routes(world.map).fetcher);
+    expect(result.status).toBe("ERROR");
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toMatch(message);
+    expect(diagnostics(result.auditDir)).toMatchObject({ status: "ERROR", exitCode: 2, error: { name: "FlippSourceError", url: itemUrl(id) } });
+    expect(result.snapshot).toBeNull();
+    expectPriorSnapshotPreserved();
+  });
+
   it("H1: a normalization failure ends the run as a source error, never a per-item exclusion", async () => {
     seedPriorSnapshot();
     const world = fixtureWorld();
@@ -563,18 +587,43 @@ describe("per-item and list-row failures (A11)", () => {
 });
 
 describe("deferral and run-wide abort (A12)", () => {
+  interface Held { settleFirst?: () => void; settleSecond?: () => void }
+
+  /**
+   * Barrier for two item requests: each item's first request is held until
+   * both have arrived, then both replies are settled in the given order in one
+   * callback. The replies share a code path, so each is judged before either
+   * failure stops the run, in that order. A later request for either item gets
+   * a 500 (the tests count requests). If the barrier never fills, a settle
+   * function stays undefined and the test's toBeDefined check fails loudly.
+   */
+  function settleTogether(world: ReturnType<typeof fixtureWorld>, first: [number, () => Response], second: [number, () => Response]): Held {
+    const held: Held = {};
+    const hold = (slot: keyof Held, reply: () => Response) => {
+      let calls = 0;
+      return () => (calls++ > 0 ? new Response(null, { status: 500 }) : new Promise<Response>((settle) => {
+        held[slot] = () => settle(reply());
+        if (held.settleFirst === undefined || held.settleSecond === undefined) return; // wait for the other request
+        held.settleFirst();
+        held.settleSecond();
+      }));
+    };
+    world.map.set(itemUrl(first[0]), hold("settleFirst", first[1]));
+    world.map.set(itemUrl(second[0]), hold("settleSecond", second[1]));
+    return held;
+  }
+
   it("a deferral stops all traffic: the other item's retry is never sent and the exit is 3", async () => {
     seedPriorSnapshot();
     const world = fixtureWorld();
     const [a, b] = QFC_ITEMS;
-    // H10: the deferral arrives a macrotask later, so b's 503 has certainly
-    // arrived and b is waiting to retry when the deferral stops the run.
-    world.map.set(itemUrl(a), () => new Promise<Response>((settle) => setImmediate(() => settle(new Response(null, DEFERRAL)))));
-    let bCalls = 0;
-    const bBody = world.bodies.get(b) ?? "";
-    world.map.set(itemUrl(b), () => (bCalls++ === 0 ? new Response(null, { status: 503 }) : jsonResponse(bBody)));
+    // H10: b's 503 is settled before a's deferral, in one step, so b is
+    // waiting to retry when the deferral stops the run.
+    const held = settleTogether(world, [b, () => new Response(null, { status: 503 })], [a, () => new Response(null, DEFERRAL)]);
     const { fetcher, requested } = routes(world.map);
     const result = await run(fetcher);
+    expect(held.settleFirst).toBeDefined();
+    expect(held.settleSecond).toBeDefined();
     expect(result.status).toBe("DEFERRED");
     expect(result.exitCode).toBe(3);
     expect(result.nextPermittedAt).toBe(NEXT_PERMITTED);
@@ -629,28 +678,14 @@ describe("deferral and run-wide abort (A12)", () => {
     expect(report).toMatch(/does not match requested item/);
   });
 
-  /**
-   * Both item requests are in flight; once both are sent, their replies are
-   * settled in the given order in one step. The replies share a code path, so
-   * each is judged before either failure stops the run, in that order.
-   */
-  function settleTogether(world: ReturnType<typeof fixtureWorld>, first: [number, () => Response], second: [number, () => Response]): void {
-    let settleFirst: (() => void) | undefined;
-    world.map.set(itemUrl(first[0]), () => new Promise<Response>((settle) => { settleFirst = () => settle(first[1]()); }));
-    world.map.set(itemUrl(second[0]), () => new Promise<Response>((settle) => {
-      setImmediate(() => {
-        settleFirst?.();
-        settle(second[1]());
-      });
-    }));
-  }
-
   it("H10: a source error followed by a deferral is DEFERRED with the next permitted time", async () => {
     seedPriorSnapshot();
     const world = fixtureWorld();
     const [a, b] = QFC_ITEMS;
-    settleTogether(world, [a, () => new Response(null, { status: 403 })], [b, () => new Response(null, DEFERRAL)]);
+    const held = settleTogether(world, [a, () => new Response(null, { status: 403 })], [b, () => new Response(null, DEFERRAL)]);
     const result = await run(routes(world.map).fetcher);
+    expect(held.settleFirst).toBeDefined();
+    expect(held.settleSecond).toBeDefined();
     expect(result.status).toBe("DEFERRED");
     expect(result.exitCode).toBe(3);
     expect(result.nextPermittedAt).toBe(NEXT_PERMITTED);
@@ -665,10 +700,12 @@ describe("deferral and run-wide abort (A12)", () => {
   it("H6: with several deferrals, nextPermittedAt is the latest of them", async () => {
     const world = fixtureWorld();
     const [a, b] = QFC_ITEMS;
-    settleTogether(world,
+    const held = settleTogether(world,
       [a, () => new Response(null, { status: 429, headers: { "retry-after": "120" } })],
       [b, () => new Response(null, { status: 503, headers: { "retry-after": "600" } })]);
     const result = await run(routes(world.map).fetcher);
+    expect(held.settleFirst).toBeDefined();
+    expect(held.settleSecond).toBeDefined();
     expect(result.status).toBe("DEFERRED");
     expect(result.exitCode).toBe(3);
     const diag = diagnostics(result.auditDir);
@@ -1014,13 +1051,18 @@ describe("inputs", () => {
     if (paths.validationsPath) expect(readFileSync(paths.validationsPath, "utf8")).toBe(before);
   });
 
-  /** Creates a symlink, or returns false where the platform does not allow it. */
+  /**
+   * Creates a symlink (a junction for directories on Windows), or returns false
+   * only where the platform refuses links; any other error is a test failure.
+   */
   function trySymlink(target: string, path: string, type: "file" | "dir"): boolean {
     try {
-      symlinkSync(target, path, type);
+      symlinkSync(target, path, type === "dir" && process.platform === "win32" ? "junction" : type);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "EACCES" || code === "ENOSYS") return false;
+      throw error;
     }
   }
 
@@ -1097,6 +1139,28 @@ describe("terminal safety (H9)", () => {
     expect(terminalSafe("PASS: ok é✓")).toBe("PASS: ok é✓");
     expect(terminalSafe("a\u001b[2Jb\rc\nd\u007fe\u009bf\u0000")).toBe("a\\u001b[2Jb\\u000dc\\u000ad\\u007fe\\u009bf\\u0000");
     expect(terminalSafe("x\u001b]0;title\u0007")).not.toMatch(CONTROLS);
+  });
+
+  it("L3: terminalSafe escapes the Unicode line and paragraph separators and the bidi controls", () => {
+    const bidi = ["\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069"];
+    for (const char of ["\u2028", "\u2029", ...bidi]) {
+      const escaped = `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
+      expect(terminalSafe(`PASS${char}BLOCKED`)).toBe(`PASS${escaped}BLOCKED`);
+    }
+    // Neighbours of the escaped ranges are ordinary text.
+    expect(terminalSafe("\u200d\u2030\u2065\u206a")).toBe("\u200d\u2030\u2065\u206a");
+  });
+
+  it("L3: report.md carries no ESC or C1 control from source text", async () => {
+    /* eslint-disable-next-line no-control-regex -- detecting control characters is the point */
+    const REPORT_CONTROLS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/;
+    const world = fixtureWorld();
+    world.map.set(flyerUrl(QFC_FLYER), JSON.stringify({ items: [...QFC_ITEMS.map(listRow), { id: 5030, name: "Cheddar\u001b[2J\u009b31mCheese" }] }));
+    const result = await run(routes(world.map).fetcher);
+    expect(result.exitCode).toBe(1);
+    const report = auditReport(result.auditDir);
+    expect(report).not.toMatch(REPORT_CONTROLS);
+    expect(report).toContain("Cheddar\\u001b\\[2J\\u009b31mCheese");
   });
 
   it("the flyer-selection error quotes listing names with their control characters escaped", async () => {

@@ -603,3 +603,85 @@ describe("final fix round: several package options and sentence-final totals (B1
     expect(offer.conditions.complete).toBe(false);
   });
 });
+
+describe("fail-closed round: package phrases and stray package sizes (F1, F2, L1)", () => {
+  const BEEF = { name: "Fresh 80% Lean Ground Beef", price_text: "lb", current_price: "4.99" };
+
+  it.each([
+    ["card wording", "3 lb Package with Card for $14.97", { loyaltyRequired: true }],
+    ["a limit", "3 lb Package, Limit 2, for $14.97", { maximumUnits: 2 }],
+    ["coupon wording", "3 lb Package - Digital Coupon Required - for $14.97", { couponRequired: true }],
+    ["avg. and member wording", "3 lb avg. Members only. Sale for $14.97", { loyaltyRequired: true }],
+  ])("F1: %s between the mass and the price is never swallowed as a package total", (_label, description, parsed) => {
+    const offer = normalize(synthetic({ ...BEEF, description }));
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    // The text stays in the condition scan: its condition is read and its $amount is unrecognized.
+    expect(offer.conditions).toMatchObject({ ...parsed, complete: false });
+    expect(offer.conditions.text).toContain(description);
+  });
+
+  it.each([
+    ["Safeway, as served", "Sold in a 3 lb Twin Pack Brick for $14.97 ea"],
+    ["a package", "3 lb Package for $14.97"],
+    ["a pack across a line break", "3 lb Pack\nfor $14.97"],
+    ["an abbreviated package", "3 lbs. Pkg. for $14.97"],
+  ])("F1: package words alone between mass and price still form a package total (%s)", (_label, description) => {
+    const offer = normalize(synthetic({ ...BEEF, description }));
+    expect(offer.unitPrice).toEqual({ basis: "lb", cents: { n: "499", d: "1" } });
+    expect(offer.packageMassLb).toEqual({ n: "3", d: "1" });
+    expect(offer.packageTotalCents).toBe(1497);
+    expect(offer.conditions.complete).toBe(true);
+    expect(offer.normalizationIssue).toBeNull();
+  });
+
+  it("F2: a consistent package total beside another stated mass is blocked with an issue", () => {
+    const offer = normalize(synthetic({ ...BEEF, current_price: "2.99", description: "1 lb or 3 lb Package for $8.97" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/several package sizes stated.*"1 lb"/);
+    // The package phrase was not accepted, so its $amount leaves the conditions incomplete.
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it("F2: \"3 lb or 1 lb Package for $2.99\" at 2.99/lb is blocked", () => {
+    const offer = normalize(synthetic({ ...BEEF, current_price: "2.99", description: "3 lb or 1 lb Package for $2.99" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/several package sizes stated.*"3 lb"/);
+  });
+
+  it.each([
+    ["a mass in the name", { name: "Fresh 80% Lean Ground Beef 5 lb", description: "3 lb Package for $14.97" }, /"5 lb"/],
+    ["an ounce mass after the total", { description: "3 lb Package for $14.97, 16 oz" }, /"16 oz"/],
+    ["a kilogram mass", { description: "3 lb Package for $14.97 (1.36 kg)" }, /"1\.36 kg"/],
+    ["a mass beside an N lb Package description", { name: "Certified Angus Beef Ground Chuck 3 lb", description: "1 lb Package", price_text: "With Card", current_price: "7.99" }, /"3 lb"/],
+  ])("F2: %s beside the accepted package blocks the unit price and package terms", (_label, fields, stray) => {
+    const offer = normalize(synthetic({ ...BEEF, ...fields }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/several package sizes stated/);
+    expect(offer.normalizationIssue).toMatch(stray);
+  });
+
+  it("F2: a leading-zero stray mass is an issue, never a throw", () => {
+    let offer: Offer | undefined;
+    expect(() => { offer = normalize(synthetic({ ...BEEF, description: "3 lb Package for $14.97 or 01 lb" })); }).not.toThrow();
+    expect(offer?.unitPrice).toBeNull();
+    expect(offer?.packageMassLb).toBeNull();
+    expect(offer?.normalizationIssue).toMatch(/leading-zero/);
+  });
+
+  it("L1: a package total at the largest safe cent amount never throws in the one-cent tolerance", () => {
+    let offer: Offer | undefined;
+    const huge = "90071992547409.91";
+    expect(() => {
+      offer = normalize(synthetic({ ...BEEF, current_price: huge, description: `1 lb Package for $${huge}` }));
+    }).not.toThrow();
+    expect(offer?.packageTotalCents).toBe(9007199254740991);
+    expect(offer?.unitPrice).toEqual({ basis: "lb", cents: { n: "9007199254740991", d: "1" } });
+  });
+});

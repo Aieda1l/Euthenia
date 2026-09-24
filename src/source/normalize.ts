@@ -100,7 +100,10 @@ interface Units {
   packageCount: number | null;
   packageTotalCents: number | null;
   issues: string[];
-  /** B1: the package-total phrase(s) accepted as consistent; only these are not conditions. */
+  /**
+   * B1/F2: the description phrase(s) that set the package terms (a consistent
+   * package total, or a whole "N lb Package" description); only these are not conditions.
+   */
   acceptedPackagePhrases: TextRange[];
 }
 
@@ -115,9 +118,14 @@ const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
 const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
 // N4/B2: the amount may not continue with a digit or with "." and a digit, so
 // "$14.975" never parses as $14 or $14.97, while a sentence-final "$8.97." does.
-// B1: the text between mass and price may not hold another "N lb", so each
-// total takes its nearest mass ("1 lb or 3 lb ... for $8.97" is 3 lb).
-const PACKAGE_TOTAL = /(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b(?:(?!\d+(?:\.\d+)?\s*lbs?\b)[^$])*?\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)/gi;
+// F1: only package words and punctuation may stand between the mass and "for
+// $X" ("3 lb Twin Pack Brick for $14.97", "3 lb Package\nfor $23.97"). Any
+// other text there (card, limit, coupon or member wording, "avg.", another
+// "N lb") means no package total, so that text stays in the condition scan.
+const PACKAGE_WORD = String.raw`(?:twin\s+packs?|packages?|pkgs?|packs?|bricks?)\b[\s.,-]*`;
+const PACKAGE_TOTAL = new RegExp(
+  String.raw`(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b[\s.,-]*(?:${PACKAGE_WORD}){0,2}\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)`,
+  "gi");
 const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?\s*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
 const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bpints?\b/, "pint"],
@@ -194,6 +202,7 @@ function normalizeUnits(item: Record<string, unknown>): Units {
   let divisor: Rational = makeRational(1);
   let packageMassLb: Rational | null = null;
   let packageTotalCents: number | null = null;
+  const acceptedPackagePhrases: TextRange[] = [];
   let blocked = false;
 
   const wording = priceWordingIssues(item);
@@ -256,6 +265,7 @@ function normalizeUnits(item: Record<string, unknown>): Units {
         divisor = mass;
         packageMassLb = mass;
         packageTotalCents = cents;
+        acceptedPackagePhrases.push({ index: 0, length: description.length });
       } else {
         issues.push("package mass is zero");
       }
@@ -292,7 +302,6 @@ function normalizeUnits(item: Record<string, unknown>): Units {
   // Package terms are set, and the phrase stops being a condition, only for a
   // single option that agrees with a known per-lb price. Several distinct
   // options, or one that contradicts the price, leave everything unknown.
-  const acceptedPackagePhrases: TextRange[] = [];
   if (basis === "lb" && packageMassLb === null) {
     const options = [...description.matchAll(PACKAGE_TOTAL)].map((match) => {
       const massText = match[1] ?? "";
@@ -317,10 +326,12 @@ function normalizeUnits(item: Record<string, unknown>): Units {
       issues.push(`package total "${label(only)}" has no positive mass; package terms and unit price unknown`);
       blocked = true;
     } else if (only && only.totalCents !== null && cents !== null) {
-      // Consistent when price x mass is within one cent of the stated total (rounding).
+      // Consistent when price x mass is within one cent of the stated total
+      // (rounding). L1: BigInt, so the largest safe total cannot overflow.
       const expected = multiplyRational(makeRational(cents), only.mass);
-      const consistent = compareRational(expected, makeRational(only.totalCents - 1)) > 0 &&
-        compareRational(expected, makeRational(only.totalCents + 1)) < 0;
+      const total = BigInt(only.totalCents);
+      const consistent = compareRational(expected, makeRational(total - 1n)) > 0 &&
+        compareRational(expected, makeRational(total + 1n)) < 0;
       if (consistent) {
         packageMassLb = only.mass;
         packageTotalCents = only.totalCents;
@@ -329,6 +340,23 @@ function normalizeUnits(item: Record<string, unknown>): Units {
         issues.push(`package total ${only.totalText} for ${only.massText} lb contradicts the per-lb price; package terms and unit price unknown`);
         blocked = true;
       }
+    }
+  }
+
+  // F2: the accepted package size must be the only size stated. Any mass left
+  // in the name or description ("1 lb or 3 lb Package for $8.97") may be
+  // another package, so the package terms and unit price are unknown and the
+  // package phrase stays in the condition scan. Masses are only listed here,
+  // never parsed, so a leading-zero one (already an issue) cannot throw.
+  if (packageMassLb !== null) {
+    const rest = normalizeText(`${name} ${blankRanges(description, acceptedPackagePhrases)}`);
+    const stray = [...rest.matchAll(STATED_MASS)].map((match) => JSON.stringify(match[0]));
+    if (stray.length > 0) {
+      issues.push(`several package sizes stated (${stray.join(", ")} beside the package terms); package terms and unit price unknown`);
+      blocked = true;
+      packageMassLb = null;
+      packageTotalCents = null;
+      acceptedPackagePhrases.length = 0;
     }
   }
 
@@ -390,9 +418,9 @@ function applyConditionRules(segment: string, state: ConditionState): string {
 }
 
 /**
- * `acceptedPackagePhrases` are the R5 package totals accepted by
- * normalizeUnits: price statements, not conditions (B1). Any other package
- * phrase or `$amount` in the description is unrecognized condition text.
+ * `acceptedPackagePhrases` are the R5 package phrases that set the package
+ * terms in normalizeUnits: price statements, not conditions (B1). Any other
+ * package phrase or `$amount` in the description is unrecognized condition text.
  */
 function parseConditions(item: Record<string, unknown>, acceptedPackagePhrases: readonly TextRange[]): Conditions {
   const state: ConditionState = { loyalty: new Set(), coupon: new Set(), minimum: new Set(), maximum: new Set() };

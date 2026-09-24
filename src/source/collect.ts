@@ -60,10 +60,14 @@ const RENAME_RETRY_CODES: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBU
  * H9: text safe to print to a terminal. Every C0 control (including CR and
  * LF), DEL and C1 control becomes a visible \uXXXX escape, so source text in
  * a message can neither send escape sequences nor forge extra output lines.
+ * L3: so do the Unicode line and paragraph separators (U+2028/U+2029) and the
+ * bidi controls (U+200E/U+200F, U+202A-U+202E, U+2066-U+2069), which could
+ * reorder or visually hide the surrounding text.
  */
 export function terminalSafe(text: string): string {
   // eslint-disable-next-line no-control-regex -- matching control characters is the point
-  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
 export type CollectStatus = "PASS" | "BLOCKED" | "ERROR" | "DEFERRED";
@@ -650,8 +654,15 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     const detail = parseFlippItem(response.json);
     // A11: identity mismatches are run-level, like a schema error.
     if (detail.id !== row.id) throw new FlippSourceError(`item detail id ${String(detail.id)} does not match requested item ${row.id}`, response.requestUrl);
-    if (detail.flyer_id !== undefined && detail.flyer_id !== null && String(detail.flyer_id) !== String(flyer.id)) {
-      throw new FlippSourceError(`item detail flyer_id ${String(detail.flyer_id)} is not the selected flyer ${flyer.id}`, response.requestUrl);
+    // F5: flyer_id must be an integer naming exactly the selected flyer. A
+    // missing, null or non-integer value is a schema error, never accepted.
+    const flyerId = detail.flyer_id;
+    if (flyerId === undefined) throw new FlippSourceError("schema: item detail flyer_id is missing", response.requestUrl);
+    if (typeof flyerId !== "number" || !Number.isSafeInteger(flyerId)) {
+      throw new FlippSourceError(`schema: item detail flyer_id ${JSON.stringify(flyerId)} is not an integer`, response.requestUrl);
+    }
+    if (flyerId !== flyer.id) {
+      throw new FlippSourceError(`item detail flyer_id ${JSON.stringify(flyerId)} is not the selected flyer ${flyer.id}`, response.requestUrl);
     }
     // Classified before normalizing, so an out-of-scope item is excluded and never reaches normalizeFlipp's throw.
     const category = classifyListRow(detail);
@@ -867,10 +878,12 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
  * Markdown-safe text for retailer and source strings anywhere in the report.
  * Every line break (CRLF, a lone CR or LF, U+2028/U+2029) becomes a space, so
  * no source text can start a line of its own, and the characters that could
- * form tables, links, HTML, code spans or headings are backslash-escaped.
+ * form tables, links, HTML, code spans or headings are backslash-escaped. L3:
+ * any other control (ESC, C1) or bidi control then becomes a visible \uXXXX
+ * escape (terminalSafe), so report.md is also safe to print to a terminal.
  */
 function md(value: unknown): string {
-  return String(value).replace(/\r\n|[\r\n\u2028\u2029]/g, " ").replace(/[\\`|<>[\]#]/g, "\\$&");
+  return terminalSafe(String(value).replace(/\r\n|[\r\n\u2028\u2029]/g, " ").replace(/[\\`|<>[\]#]/g, "\\$&"));
 }
 
 function cell(value: unknown): string {

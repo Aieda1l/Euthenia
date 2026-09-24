@@ -1,13 +1,13 @@
 # M1 source proof - status: BLOCKED
 
-**Gate result (2026-09-24 18:45Z, code a9e2101): BLOCKED, exit 1.** The live run on current ads found 0 qualifying offers per chain and 0 counted pairs. The gate needs 10 per chain and 5 cross-chain pairs. No snapshot was written. Under the plan's stop condition, Task 1 and M1 stay open and dependent UI work (Tasks 3-4) does not start.
+**Gate result (2026-09-24 19:15Z, code 7e2d544): BLOCKED, exit 1.** The live run on current ads found 0 qualifying offers per chain and 0 counted pairs. The gate needs 10 per chain and 5 cross-chain pairs. No snapshot was written. Under the plan's stop condition, Task 1 and M1 stay open and dependent UI work (Tasks 3-4) does not start.
 
-Full generated report for this run: [M1_SOURCE_PROOF_RUN_2026-09-24T18-45Z.md](M1_SOURCE_PROOF_RUN_2026-09-24T18-45Z.md). Validation input: [M1_SOURCE_VALIDATIONS_2026-09-24.json](M1_SOURCE_VALIDATIONS_2026-09-24.json). Source evidence: [M1_SOURCE_EVIDENCE_2026-09-24.md](M1_SOURCE_EVIDENCE_2026-09-24.md).
+Full generated report for this run: [M1_SOURCE_PROOF_RUN_2026-09-24T19-15Z.md](M1_SOURCE_PROOF_RUN_2026-09-24T19-15Z.md). Validation input: [M1_SOURCE_VALIDATIONS_2026-09-24.json](M1_SOURCE_VALIDATIONS_2026-09-24.json). Source evidence: [M1_SOURCE_EVIDENCE_2026-09-24.md](M1_SOURCE_EVIDENCE_2026-09-24.md).
 
 ## What ran
 
 - Command: `npm run source:collect -- --postal-code 98105 --validations docs/research/M1_SOURCE_VALIDATIONS_2026-09-24.json`.
-- Collector commit: a9e2101. 481/481 unit tests pass, and typecheck and lint are clean.
+- Collector commit: 7e2d544. 530/530 unit tests pass, and typecheck and lint are clean.
 - Requests: 43 live HTTPS requests to `backflipp.wishabi.com`, all accepted. The run used concurrency 2 and allowlisted hosts only.
 - Flyers were selected from the live 98105 listing, not hardcoded:
 
@@ -33,10 +33,10 @@ The table recomputes the counts from this run's normalized offers, using the rep
 |---|---|---|---|
 | Approved rules (current) | 0 | 0 | 0 |
 | + produce without an organic claim = conventional | 1 | 3 | 0 |
-| + meat without a frozen marking = fresh | 1 | 2 | 0 |
-| Both relaxations | 2 (Envy apples, 93% ground beef) | 5 (Gala, Cosmic Crisp, Bartlett pears, chicken breasts, cube steak) | **0** |
+| + meat without a frozen marking = fresh | 0 | 2 | 0 |
+| Both relaxations | 1 (Envy apples) | 5 (Gala, Cosmic Crisp, Bartlett pears, chicken breasts, cube steak) | **0** |
 
-The main constraint is not the identity strictness. Weekly ads list only a few dozen produce/meat items, and many lack an explicit unit basis: "With Card" alone, bags, multi-buys, BOGO. The two chains' sale items rarely overlap. This week QFC advertises Envy apples, 93% ground beef and whole chicken; Safeway advertises Gala and Cosmic Crisp apples, chicken breasts and beef steaks. Even with both relaxations and full attestation, no week-one pair exists. The 10-per-chain floor is also out of reach.
+The main constraint is not the identity strictness. Weekly ads list only a few dozen produce/meat items, and many lack an explicit unit basis: "With Card" alone, bags, multi-buys, BOGO. QFC's 93% ground beef, for example, states two package prices ($23.97 for 3 lb, $8.99 for 1 lb) that do not share one per-lb price, so it stays unpriced. The two chains' sale items rarely overlap. This week QFC advertises Envy apples, 93% ground beef and whole chicken; Safeway advertises Gala and Cosmic Crisp apples, chicken breasts and beef steaks. Even with both relaxations and full attestation, no week-one pair exists. The 10-per-chain floor is also out of reach.
 
 PCC, the plan's fallback, has about 8 produce and 5 meat specials over a three-week period, many without units. It cannot meet the 10-per-family floor either.
 

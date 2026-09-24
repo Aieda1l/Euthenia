@@ -1,10 +1,10 @@
 # Gap Analysis
 
-Evidence baseline: 2026-09-24. The M1 Task 1 collector and proof code exist at a9e2101: 481/481 tests pass, and typecheck and lint are clean. The live source-proof gate is **BLOCKED**; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
+Evidence baseline: 2026-09-24. The M1 Task 1 collector and proof code exist at 7e2d544: 530/530 tests pass, and typecheck and lint are clean. The live source-proof gate is **BLOCKED**; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
 
 | Gap | Evidence | Smallest next step | State |
 |---|---|---|---|
-| Comparable price coverage (M1 source gate) | Live run: 0 qualifying offers per chain and 0 pairs under the approved rules. With both candidate identity relaxations, still 2 QFC / 5 Safeway and 0 pairs. Weekly sale items rarely overlap across chains. | User decides the source strategy. Recommended: add catalog prices, i.e. the Kroger Public API (needs the user's developer credentials) and a Safeway store product-search probe. | **Blocked on user decision** |
+| Comparable price coverage (M1 source gate) | Live run: 0 qualifying offers per chain and 0 pairs under the approved rules. With both candidate identity relaxations, still 1 QFC / 5 Safeway and 0 pairs. Weekly sale items rarely overlap across chains. | User decides the source strategy. Recommended: add catalog prices, i.e. the Kroger Public API (needs the user's developer credentials) and a Safeway store product-search probe. | **Blocked on user decision** |
 | QFC applicability/calendar evidence | qfc.com rejects this cloud host; the QFC ad is unattested | Attest from a residential connection, or use the Kroger API's store-scoped data | Open |
 | Safeway applicability/calendar evidence | Store 2980 resolves to flyer 8139228; printed terms 7 a.m. Wed through Tue midnight (attested) | Repeat per weekly flyer; consider automating the store-publication check | Partially closed (current week) |
 | Execution runtime | The Codex route was blocked; Claude Code now executes (DEC-20260924-001) | - | Closed |

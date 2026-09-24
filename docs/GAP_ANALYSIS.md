@@ -1,6 +1,6 @@
 # Gap Analysis
 
-Evidence baseline: 2026-09-24. The M1 Task 1 collector and proof code exist at 7e2d544: 530/530 tests pass, and typecheck and lint are clean. The live source-proof gate is **BLOCKED**; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
+Evidence baseline: 2026-09-24. The M1 Task 1 collector and proof code exist at ea20708: 562/562 tests pass, and typecheck and lint are clean. The live source-proof gate is **BLOCKED**; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
 
 | Gap | Evidence | Smallest next step | State |
 |---|---|---|---|

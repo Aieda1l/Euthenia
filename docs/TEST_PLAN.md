@@ -19,7 +19,7 @@ Pinned toolchain: typescript 6.0.3, typescript-eslint 8.70.1, eslint 10.11.0, vi
 
 `tests/setup.ts` makes global `fetch` throw during unit tests. Every HTTP test injects a fetcher, so the unit suite never touches the network.
 
-Last verified: 2026-09-24 at 7e2d544 after `npm ci`, with 530/530 tests passing and typecheck and lint clean. The live gate run is BLOCKED; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
+Last verified: 2026-09-24 at ea20708 after `npm ci`, with 562/562 tests passing and typecheck and lint clean. The live gate run is BLOCKED; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
 
 Later tasks add UI, Electron and smoke scripts as planned. Do not report them until they exist.
 

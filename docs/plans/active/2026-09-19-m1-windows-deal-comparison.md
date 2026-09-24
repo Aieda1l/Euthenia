@@ -442,7 +442,7 @@ R4. **Documented not-applicable and default rules.** Rules live beside `comparis
 - **Produce `variety`:** required for kinds where variety is commercially material (at least apple, pear, grape, potato, onion, pepper, mushroom). For other kinds it is `not-applicable` (for example strawberry, raspberry, blackberry, blueberry, broccoli, cauliflower, lemon, lime), per a documented kind table.
 - **Produce `form`:** `whole` when the text names the kind with no form qualifier. A documented qualifier (sliced, diced, chopped, cut, peeled, shredded, florets, spiralized, baby) sets that form. Conflicting qualifiers make it `unknown`.
 - **Meat `bone`:** "boneless" gives `out`, "bone-in" gives `in`, ground meat is `not-applicable`, anything else is `unknown`.
-- **Meat `skin`:** applies to poultry only in M1. "skinless" gives `off`, "skin-on" gives `on`, otherwise `unknown`. For beef, pork and lamb it is `not-applicable`.
+- **Meat `skin`:** applies to poultry cuts only in M1. "skinless" gives `off`, "skin-on" gives `on`, otherwise `unknown`. For beef, pork and lamb, and for ground meat of any species, it is `not-applicable`; for ground meat the lean/fat percentage is the discriminator (amended 2026-09-24 after Task 1A).
 - **Meat `freshFrozen`:** `fresh` or `frozen` only from explicit "fresh", "frozen" or "previously frozen" text. Otherwise `unknown`.
 - **Meat `fatPercent`:** applies to ground meat only. "93% lean" gives fat 7, "80/20" gives fat 20, and a single 50-99% value in text that also says "lean" is the lean percentage. It is `not-applicable` for whole cuts. Missing on ground meat means `unknown`.
 - **`comparisonKey`:** returns `null` whenever any required field is `unknown`.

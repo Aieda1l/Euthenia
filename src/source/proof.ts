@@ -48,6 +48,10 @@ export interface ProofEvaluation {
   ok: boolean;
   /** Gate failures first, then exclusions, skipped pairs and notes. */
   reasons: string[];
+  /** Gate failures only (empty exactly when ok). */
+  failures: string[];
+  /** Non-failing notes, e.g. validations for offers that do not exist. */
+  notes: string[];
   families: Record<Family, FamilyCount>;
   excluded: Array<{ offerId: string; reasons: string[] }>;
   countedPairs: Pair[];
@@ -341,7 +345,7 @@ export function evaluateProof(snapshot: SourceSnapshot, now: Date): ProofEvaluat
     ...skippedPairs.map(({ pair, reason }) => `pair ${String(pair.leftId)} + ${String(pair.rightId)} skipped: ${reason}`),
     ...notes,
   ];
-  return { ok: failures.length === 0, reasons, families: counts, excluded, countedPairs, skippedPairs };
+  return { ok: failures.length === 0, reasons, failures, notes, families: counts, excluded, countedPairs, skippedPairs };
 }
 
 /** R10 gate verdict with every failure and exclusion reason. */

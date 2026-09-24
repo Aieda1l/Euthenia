@@ -137,6 +137,19 @@ describe("checkProof passing case (synthetic)", () => {
     expect(evaluation.families.kroger).toMatchObject({ count: 10, produce: 7, meat: 3 });
     expect(evaluation.families.albertsons).toMatchObject({ count: 10, produce: 7, meat: 3 });
     expect(evaluation.countedPairs).toHaveLength(5);
+    expect(evaluation.failures).toEqual([]);
+  });
+});
+
+describe("evaluateProof failures field (synthetic)", () => {
+  it("lists gate failures only, matching the leading reasons, and is empty exactly when ok", () => {
+    const snap = snapshot();
+    snap.proof.pairs = snap.proof.pairs.slice(0, 4);
+    const evaluation = evaluateProof(snap, NOW);
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.failures).toEqual(["4 counted pairs (need at least 5)"]);
+    expect(evaluation.reasons.slice(0, evaluation.failures.length)).toEqual(evaluation.failures);
+    expect(evaluation.failures.some((reason) => reason.startsWith("excluded ") || reason.startsWith("pair "))).toBe(false);
   });
 });
 

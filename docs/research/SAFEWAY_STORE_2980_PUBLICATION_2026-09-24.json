@@ -1,0 +1,27 @@
+{
+  "observedAt": "2026-09-24T17:03:21Z",
+  "context": "Read-only request identical to the one Safeway's public weekly-ad page makes for store 2980 (4732 Brooklyn Ave NE, Seattle 98105). The public client access_token from Safeway's weekly-ad bundle is redacted here.",
+  "request": "GET https://api.flipp.com/flyerkit/v4.0/publications/safeway?access_token=<redacted public client token>&locale=en-US&postal_code=98105&store_code=2980",
+  "responseSha256": "8d39eae27ed55562bdf4b526b8e374fc27dd900ef838b2ac2886ab6af3996e9a",
+  "publicationCount": 1,
+  "publication": {
+    "id": 8139228,
+    "flyer_run_id": 1046641,
+    "name": "Weekly Ad - Safeway - Seattle",
+    "external_display_name": "Weekly Ad",
+    "flyer_type": "safewayseattle",
+    "flyer_type_id": 10461,
+    "merchant_name": "Safeway",
+    "locale": "en",
+    "postal_code": "98105",
+    "valid_from": "2026-09-23T00:00:00-04:00",
+    "valid_to": "2026-09-29T23:59:59-04:00",
+    "available_from": "2026-09-22T00:00:00-04:00",
+    "available_to": "2026-09-29T23:59:59-04:00",
+    "validity_text": "This Week Only",
+    "total_pages": 6,
+    "pdf_url": "https://f.wishabi.net/flyers/17121660/258b7b4077386a4a.pdf",
+    "deep_link": "https://coupons.safeway.com/weeklyad/?flyer_run_id=1046641&flyer_type_name=safewayseattle&locale=en&postal_code=98105&store_code=2980",
+    "correction_notices": []
+  }
+}

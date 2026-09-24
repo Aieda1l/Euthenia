@@ -469,7 +469,7 @@ R7. **Evidence and IDs.**
 - `Offer.id` = `flipp:<family>:<sourceItemId>`.
 
 R8. **Calendar and applicability default to unknown.** The collector marks offers `applicability: "verified"` and `calendarRule: "verified-local-date"` only from an explicit human attestation for that exact flyer ID (see R9).
-- **`verified-local-date`:** `startsAt` is local midnight in America/Los_Angeles on the date part of `valid_from`. `expiresAt` is the next Los Angeles midnight after the date part of `valid_to` (exclusive). Use `Intl`; no timezone dependency.
+- **`verified-local-date`:** `startsAt` is the attested printed start time (`startLocalTime`, 24-hour `HH:MM`; use `00:00` only when the ad prints dates alone) in America/Los_Angeles on the date part of `valid_from`. `expiresAt` is the next Los Angeles midnight after the date part of `valid_to` (exclusive). Use `Intl`; no timezone dependency. Evidence (2026-09-24): Safeway's printed ad says "available 7 a.m. Wednesday, September 23, thru Tuesday, September 29, 2026, Midnight", so midnight is not a safe universal start.
 - **`unknown`:** `startsAt` and `expiresAt` are `null`, raw values stay in evidence, and there is never an `available_to` fallback.
 - **Contradictory validity** (start ≥ end): the calendar becomes unknown and the offer gets a `normalizationIssue`.
 - **Freshness:**
@@ -484,7 +484,8 @@ R9. **Human validation input.** `npm run source:collect -- --postal-code 98105 [
 { schemaVersion: 1;
   attestations: Array<{ family: Family; flyerId: number; checkedAt: string;
     applicability: "verified"; applicabilityEvidence: string;
-    calendarRule: "verified-local-date"; calendarEvidence: string }>;
+    calendarRule: "verified-local-date"; calendarEvidence: string;
+    startLocalTime: string }>;                   // printed start, 24-hour "HH:MM"
   validations: Validation[];                    // bind via evidenceIds (raw-hash IDs)
   pairs: Proof["pairs"] }                       // human-checked cross-family pairs
 ```

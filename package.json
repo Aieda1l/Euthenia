@@ -6,6 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "test:source": "vitest run tests/source",
+    "source:collect": "tsx scripts/collect.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },

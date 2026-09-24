@@ -552,3 +552,10 @@ These amendments are binding and are all stricter than before (DEC-20260924-003)
   - An invalid attestation for a flyer makes that flyer's attestation `unknown`, even when a valid one is also present.
 - **A9 - R7 evidence bytes.** `flippEvidence` accepts the exact response bytes (`Uint8Array`) and hashes them. A string input is hashed as UTF-8 and exists only for tests.
 - **A10 - REQUIRED_VERIFIED_FIELDS** also includes `packageCount`.
+- **A11 - R11, per-item and list-row failures** (after the Task 1B reviews).
+  - An item-detail HTTP 404 or 410 excludes only that item, recording its URL and status. The run continues and the gate is recomputed.
+  - Everything else stays run-level: item schema errors (a changed schema must surface), id mismatches, transport errors and timeouts, 401/403, HTML, wrong content type or bad UTF-8/JSON, 5xx after retries, and deferral.
+  - If every detail request for a selected flyer fails, the run is a source error (exit 2), never a BLOCKED gate.
+  - A flyer list row that has a valid positive-integer id but a missing or non-string name is recorded as an excluded row, not a run failure.
+  - In the listing, strict fields are required only for QFC/Safeway flyers. Malformed flyers from other merchants are ignored and noted.
+- **A12 - R11, deferral stops all traffic.** Once any request is deferred, no request of any kind (new, retry or redirect hop) may be sent in that run. A run-wide abort signal enforces this.

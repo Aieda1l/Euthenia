@@ -104,7 +104,9 @@ describe("normalizeFlipp on the committed research fixture", () => {
     expect(offer.packageTotalCents).toBeNull();
     expect(offer.conditions.loyaltyRequired).toBe(true);
     expect(offer.conditions.complete).toBe(false);
-    expect(offer.identity).toMatchObject({ species: known("chicken"), cut: unknown });
+    // Its description says "mix & match", an alternation, so the
+    // distinguishing fields fail closed (species too, not just cut).
+    expect(offer.identity).toMatchObject({ species: unknown, cut: unknown });
   });
 
   it("Safeway broccoli/cauliflower: lb basis 249 but kind unknown, so no key", () => {
@@ -684,4 +686,37 @@ describe("fail-closed round: package phrases and stray package sizes (F1, F2, L1
     expect(offer?.packageTotalCents).toBe(9007199254740991);
     expect(offer?.unitPrice).toEqual({ basis: "lb", cents: { n: "9007199254740991", d: "1" } });
   });
+});
+
+describe("final quality/spec notes: hyphenated sizes and condition wording", () => {
+  it("a hyphenated package mass on an each-priced item blocks the each price", () => {
+    const offer = normalize(synthetic({ name: "Organic Strawberries", description: "1-lb. Pkg.", price_text: "ea" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).not.toBeNull();
+  });
+
+  it("a hyphenated mass beside a consistent package total is a stray package size", () => {
+    const offer = normalize(synthetic({ description: "1-lb. or 3 lb Package for $8.97", price_text: "lb", current_price: "2.99" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/several package sizes/);
+  });
+
+  it.each([
+    ["disclaimer_text", "Limit 10 lbs"],
+    ["description", "When you buy 3 lbs or more"],
+  ])("a limit or minimum stated as a weight (%s %j) is not read as a unit count", (field, text) => {
+    const offer = normalize(synthetic({ [field]: text, price_text: "lb" }));
+    expect(offer.conditions.maximumUnits).toBeNull();
+    expect(offer.conditions.minimumUnits).toBeNull();
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it.each(["3 lb Package for $14.97 Club Price", "Requires membership", "with Safeway for U"])(
+    "description condition wording %j makes conditions incomplete",
+    (description) => {
+      const offer = normalize(synthetic({ description, price_text: "lb", current_price: "4.99" }));
+      expect(offer.conditions.complete).toBe(false);
+    },
+  );
 });

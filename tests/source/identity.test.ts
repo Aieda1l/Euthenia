@@ -720,18 +720,50 @@ describe("fail-closed round: cut words and alternatives in the description (F3, 
 
   it("F4: a description alternative naming another variety of the same kind makes variety unknown", () => {
     const apples = produce("Organic Gala Apples", "or Fuji");
-    expect(apples).toMatchObject({ kind: known("apple"), variety: unknown });
+    expect(apples).toMatchObject({ kind: unknown, variety: unknown });
     expect(comparisonKey(apples)).toBeNull();
-    const same = produce("Organic Gala Apples", "Gala or Gala");
-    expect(same).toMatchObject({ variety: known("gala") });
+    // Any alternation in the description fails closed, even a repeated variety.
+    expect(comparisonKey(produce("Organic Gala Apples", "Gala or Gala"))).toBeNull();
   });
 
-  it("F4: an alternation that names no other vocabulary value leaves the fields known", () => {
-    const steak = meat("Fresh Boneless Beef New York Strip Steaks", "Great for grilling or broiling");
+  it("F4: a description without any alternation leaves the fields known", () => {
+    const steak = meat("Fresh Boneless Beef New York Strip Steaks", "Great for grilling");
     expect(steak).toMatchObject({ species: known("beef"), cut: known("strip steak") });
     expect(comparisonKey(steak)).not.toBeNull();
-    const berries = produce("Organic Strawberries", "Sweet and juicy");
+    const berries = produce("Organic Strawberries", "Sweet, juicy");
     expect(berries).toMatchObject({ kind: known("strawberry") });
     expect(comparisonKey(berries)).not.toBeNull();
+  });
+});
+
+describe("final spec/quality notes: description alternatives fail closed", () => {
+  it.each([
+    ["Organic Navel Oranges", "or Organic Mandarins"],
+    ["Organic Gala Apples", "or Organic Kiku Apples"],
+    ["Organic Carrots", "or Baby Peeled"],
+    ["Organic Strawberries", "Mix & Match Strawberries, Blueberries"],
+    ["Organic Strawberries", "Sweet or juicy"],
+  ])("produce %j with the description %j never keys", (name, description) => {
+    expect(comparisonKey(produce(name))).not.toBeNull();
+    expect(comparisonKey(produce(name, description))).toBeNull();
+  });
+
+  it.each([
+    ["Fresh Boneless Skinless Chicken Thighs", "Bone-In or Boneless Skinless"],
+    ["Fresh Boneless Beef New York Strip Steaks", "Great for grilling or broiling"],
+  ])("meat %j with the description %j never keys", (name, description) => {
+    expect(comparisonKey(meat(name, description))).toBeNull();
+  });
+
+  it.each([
+    ["Fresh Boneless Beef Brisket", "First Cut"],
+    ["Fresh Boneless Beef Brisket", "Second Cut"],
+  ])("%j with the description %j never shares the plain brisket key", (name, description) => {
+    expect(comparisonKey(meat(name))).not.toBeNull();
+    expect(comparisonKey(meat(name, description))).toBeNull();
+  });
+
+  it("\"Fresh Boneless Beef Brisket First Cut\" never shares the plain brisket key", () => {
+    expect(comparisonKey(meat("Fresh Boneless Beef Brisket First Cut"))).toBeNull();
   });
 });

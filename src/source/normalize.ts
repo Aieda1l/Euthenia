@@ -135,7 +135,8 @@ const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:clamshells?|containers?|baskets?|box|boxes)\b/, "container"],
 ];
 const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?\s*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
-const STATED_MASS = /\b\d+(?:\.\d+)?\s*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/g;
+// Hyphenated sizes ("1-lb.", "16-oz.") count too.
+const STATED_MASS = /\b\d+(?:\.\d+)?[\s-]*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/g;
 const STATED_COUNT = /(?<![\d.])(0|[1-9]\d*)\s*(?:ct|count)\b/g;
 
 // Loyalty phrases shared by the R6 condition rules and the A5 price vocabulary.
@@ -388,15 +389,19 @@ const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (groups: MatchGroups, sta
   [/\b(?:no (?:digital )?coupons?(?: (?:needed|required|necessary))?|(?:digital )?coupons? not (?:needed|required|necessary))\b/g,
     (_, s) => s.coupon.add(false)],
   [/\b(?:with )?(?:digital )?coupons?(?: required)?\b/g, (_, s) => s.coupon.add(true)],
-  [/\blimit (\d+)(?: per (?:household|customer|transaction|order|day|visit))?\b/g, (g, s) => s.maximum.add(Number(g[1]))],
-  [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b/g, (g, s) => s.minimum.add(Number(g[1]))],
+  // A limit or minimum stated as a weight ("Limit 10 lbs") is not a unit
+  // count, so those rules skip it and the text stays unrecognized.
+  [/\blimit (\d+)\b(?!\.\d|[\s-]*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b)(?: per (?:household|customer|transaction|order|day|visit))?\b/g,
+    (g, s) => s.maximum.add(Number(g[1]))],
+  [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b(?!\.\d|[\s-]*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b)/g,
+    (g, s) => s.minimum.add(Number(g[1]))],
   [/\b\d+ for\b/g, () => undefined],
   [/\bper (?:lb|pound|each)\b|\b(?:lbs?|ea|each)\b/g, () => undefined],
   [/\bmix (?:and|&) match\b/g, () => undefined],
 ];
 const CONDITION_FILLER = /\b(?:price|prices|only|and|with|sale|special)\b/g;
 // A6: purchase, spend, required, additional and any $amount also signal conditions.
-const CONDITION_INDICATOR = /\b(?:limit|members?|card|coupons?|digital|clip|must|buy|get|free|bogo|save|off|min(?:imum)?|rebate|rewards?|points|mix (?:and|&) match|equal or lesser|purchases?|spend|required|additional)\b|\$\s*\d/;
+const CONDITION_INDICATOR = /\b(?:limit|members?|card|coupons?|digital|clip|must|buy|get|free|bogo|save|off|min(?:imum)?|rebate|rewards?|points|mix (?:and|&) match|equal or lesser|purchases?|spend|required|additional|club|membership|for u)\b|\$\s*\d/;
 
 /** The text with each range blanked out. */
 function blankRanges(text: string, ranges: readonly TextRange[]): string {

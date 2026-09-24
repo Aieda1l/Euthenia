@@ -61,12 +61,12 @@ const RENAME_RETRY_CODES: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBU
  * LF), DEL and C1 control becomes a visible \uXXXX escape, so source text in
  * a message can neither send escape sequences nor forge extra output lines.
  * L3: so do the Unicode line and paragraph separators (U+2028/U+2029) and the
- * bidi controls (U+200E/U+200F, U+202A-U+202E, U+2066-U+2069), which could
+ * bidi controls (U+061C, U+200E/U+200F, U+202A-U+202E, U+2066-U+2069), which could
  * reorder or visually hide the surrounding text.
  */
 export function terminalSafe(text: string): string {
   // eslint-disable-next-line no-control-regex -- matching control characters is the point
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,
     (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 

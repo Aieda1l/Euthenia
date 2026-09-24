@@ -263,7 +263,7 @@ const PREPARATION = /\b(?:thin(?:ly)? (?:cut|sliced)|thick (?:cut|sliced)|sliced
  * description, where no cut phrase consumes them, any of these words
  * (including drumettes, a wing part) makes the cut unknown.
  */
-const CUT_RESIDUE = /\b(?:chuck|sirloin|round|rump|heel|eye|cross|arm|blade|bottom|top|tips?|tri|petite|flats?|flap|cap|center|ends?|inside|outside|thin|thick|frenched|strips?|slices?|cubes?|chunks?|pieces?|portions?|bites?|fillets?|filets?|medallions?|shaved|tenders?|halves|halved|half|split|sections?|drums?|drumm?ettes?|backs?|necks?|cut up|point|deckle|tomahawk|cowboy)\b/;
+const CUT_RESIDUE = /\b(?:chuck|sirloin|round|rump|heel|eye|cross|arm|blade|bottom|top|tips?|tri|petite|flats?|flap|cap|center|ends?|inside|outside|thin|thick|frenched|strips?|slices?|cubes?|chunks?|pieces?|portions?|bites?|fillets?|filets?|medallions?|shaved|tenders?|halves|halved|half|split|sections?|drums?|drumm?ettes?|backs?|necks?|cut up|(?:first|second) cut|point|deckle|tomahawk|cowboy)\b/;
 
 /**
  * Cut vocabulary, most specific first. Specific cuts identify meat even
@@ -732,26 +732,24 @@ export function deriveIdentity(category: "produce" | "meat", name: string, descr
   const fullText = normalizeText(`${name} ${description ?? ""}`).replace(MIX_AND_MATCH, " ");
   const assorted = ASSORTMENT.test(fullText) || /\bmix (?:and|&) match\b/.test(normalizeText(`${name} ${description ?? ""}`));
   // F4 (R3): a description that lists alternatives ("or Boneless Chuck Roasts
-  // or Steaks" under "New York Strip Steaks") names more products, so a kind,
-  // species, cut or variety it names that differs from the name's makes that
-  // field unknown.
-  const describesAlternatives = ALTERNATION.test(descriptionText);
-  const unlessDescribedOther = (value: Known<string>, described: readonly string[]): Known<string> =>
-    describesAlternatives && value.state === "known" && described.some((other) => other !== value.value) ? UNKNOWN : value;
+  // or Steaks" under "New York Strip Steaks", "or Organic Mandarins", "Mix &
+  // Match ...") may name products outside the vocabulary, so any alternation
+  // there makes the distinguishing fields (kind, variety, species, cut)
+  // unknown. Prose such as "great for grilling or broiling" loses coverage;
+  // that is the fail-closed choice.
+  const describesAlternatives = ALTERNATION.test(normalizeText(description ?? ""));
+  const unlessDescribedOther = (value: Known<string>): Known<string> => (describesAlternatives ? UNKNOWN : value);
 
   if (category === "produce") {
     const named = single(segments.flatMap((segment) => kindsIn(segment).kinds));
     const headKind = named.state === "known" ? named.value : null;
     const kind = unlessDescribedOther(
-      acrossSegments(segments, (segment) => kindsIn(segment).kinds, (segment) => isPure(segment, headKind)),
-      kindsIn(descriptionText).kinds);
+      acrossSegments(segments, (segment) => kindsIn(segment).kinds, (segment) => isPure(segment, headKind)));
     let variety: Known<string> = UNKNOWN;
     if (kind.state === "known") {
       if (VARIETY_NOT_APPLICABLE.has(kind.value)) variety = NOT_APPLICABLE;
       else if (!assorted) {
-        variety = unlessDescribedOther(
-          acrossSegments(segments, (segment) => varietiesIn(segment, kind.value), null),
-          varietiesIn(descriptionText, kind.value));
+        variety = unlessDescribedOther(acrossSegments(segments, (segment) => varietiesIn(segment, kind.value), null));
       }
     }
     // A2: a processed form never defaults to whole.
@@ -761,8 +759,8 @@ export function deriveIdentity(category: "produce" | "meat", name: string, descr
   }
 
   const modifier = (segment: string) => isPure(segment, null);
-  const species = unlessDescribedOther(acrossSegments(segments, speciesIn, modifier), speciesIn(descriptionText));
-  let cut = assorted ? UNKNOWN : unlessDescribedOther(acrossSegments(segments, segmentCuts, modifier), cutsIn(descriptionText).cuts);
+  const species = unlessDescribedOther(acrossSegments(segments, speciesIn, modifier));
+  let cut = assorted ? UNKNOWN : unlessDescribedOther(acrossSegments(segments, segmentCuts, modifier));
   // A4 and F3: a preparation qualifier or a cut-part word in the description makes the cut unknown.
   if ((cut.state === "known" && cut.value === AMBIGUOUS_CUT) || PREPARATION.test(descriptionText) || CUT_RESIDUE.test(descriptionText)) cut = UNKNOWN;
   const ground = cut.state === "known" && isGroundCut(cut.value);

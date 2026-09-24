@@ -98,3 +98,18 @@ USDA Choice/Select and Angus claims are not yet a discriminator. That limitation
 **Why:** A false match or price is worse than lower coverage, and the MVP accuracy constraints require unknown over guessed.  
 **Consequences:** Coverage drops further, which makes the live gate harder to pass. The user decisions flagged in `M1_SOURCE_EVIDENCE_2026-09-24.md` become more consequential.  
 **Revisit when:** The contract gains production-claim or grade attributes, or live evidence shows that an exclusion removes only genuinely comparable offers.
+
+### DEC-20260924-004 - Text rules fail closed; human validation is the backstop
+
+**Status:** Accepted. This is an orchestrator engineering decision.  
+**Context:** Several independent review rounds kept finding new retailer wordings where the open-vocabulary text rules produced a guessed value. Examples: alternatives outside the vocabulary, condition text inside package phrases, and hyphenated sizes. Each fix was sound, but the space of wordings is unbounded.  
+**Decision:**
+- Parsing is fail-closed by construction. Only positively understood text produces a known unit, price, package term, condition or identity value; anything else yields unknown or null with an issue, or `complete: false`.
+- Where a precise rule keeps leaking, prefer a blanket rule, even at a cost in coverage. Example: A13 treats any alternation in a description as unknown.
+- Reviews of the parser treat only realistic fail-open paths as blocking; lost coverage is not blocking.
+- The source-proof gate still counts only offers whose parser output a human has checked against the ad (R9 `verifiedFields`).
+- Task 2's automated ratings must use only structured, positively parsed fields, and must not treat ad-text parsing as ground truth without that validation.
+
+**Why:** A wrong price or match is worse than a missing one, and review cycles need a convergence criterion.  
+**Consequences:** Coverage from ad text drops further. This strengthens the case for structured catalog sources (see research/M1_SOURCE_PROOF.md).  
+**Revisit when:** A structured source replaces ad-text parsing as the primary input.

@@ -152,6 +152,15 @@ function validationProblems(validation: Validation, offer: Offer): string[] {
   return problems;
 }
 
+/**
+ * The validations that count for `offer` under R9: those naming it with no
+ * validation problem (the same checks as evaluateProof). Malformed entries are skipped.
+ */
+export function validValidationsFor(offer: Offer, validations: readonly unknown[]): Validation[] {
+  return validations.filter((validation): validation is Validation =>
+    isRecord(validation) && validation.offerId === offer.id && validationProblems(validation as unknown as Validation, offer).length === 0);
+}
+
 function emptyCounts(): Record<Family, FamilyCount> {
   const counts = {} as Record<Family, FamilyCount>;
   for (const family of FAMILIES) counts[family] = { count: 0, produce: 0, meat: 0, sourceItemIds: [], offerIds: [] };

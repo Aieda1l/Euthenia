@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import type {
@@ -30,7 +30,7 @@ import {
   type FlippRow,
 } from "./flipp.js";
 import { classifyListRow, flippEvidence, normalizeFlipp } from "./normalize.js";
-import { assembleProof, attestationFor, candidatePairs, evaluateProof, type ProofEvaluation } from "./proof.js";
+import { assembleProof, attestationFor, candidatePairs, evaluateProof, validValidationsFor, type ProofEvaluation } from "./proof.js";
 
 // Live Flipp collection for the M1 source-proof gate (plan Task 1, addendum
 // R8-R11): listing -> current QFC/Safeway Weekly Ads -> produce/meat item
@@ -45,11 +45,26 @@ const MERCHANTS: ReadonlyArray<{ family: Family; merchant: string; retailer: str
   { family: "albertsons", merchant: "Safeway", retailer: "Safeway" },
 ];
 const WEEKLY_AD = "Weekly Ad";
-/** Equal to the Flipp client's concurrency, so no request waits in its queue. */
+/**
+ * Item-detail workers. Two matches the Flipp client's process-wide limit of two
+ * requests in flight, so no started item waits in the client's queue. That is
+ * only tidiness: the client enforces the limit, and the run-wide abort (A12)
+ * stops queued requests too, for any worker count.
+ */
 const DETAIL_WORKERS = 2;
 /** Snapshot rename retries for transient Windows antivirus or file-lock errors. */
 const RENAME_RETRIES = 5;
 const RENAME_RETRY_CODES: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/**
+ * H9: text safe to print to a terminal. Every C0 control (including CR and
+ * LF), DEL and C1 control becomes a visible \uXXXX escape, so source text in
+ * a message can neither send escape sequences nor forge extra output lines.
+ */
+export function terminalSafe(text: string): string {
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
 
 export type CollectStatus = "PASS" | "BLOCKED" | "ERROR" | "DEFERRED";
 const EXIT_CODES = { PASS: 0, BLOCKED: 1, ERROR: 2, DEFERRED: 3 } as const;
@@ -255,18 +270,45 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
+async function isSymlink(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isSymbolicLink();
+  } catch {
+    return false; // absent: nothing to follow
+  }
+}
+
+/**
+ * `path` with every symbolic link resolved. A missing tail (a report directory
+ * not created yet) is kept as written under its deepest existing ancestor.
+ */
+async function realPathOf(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    const parent = dirname(path);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === path) return path;
+    return join(await realPathOf(parent), basename(path));
+  }
+}
+
 /**
  * The resolved --report path, checked before any request so the report can
- * never clobber the snapshot, the validations file or a directory. Null
- * without --report.
+ * never clobber the snapshot, the validations file or a directory. H7: the
+ * checks compare real paths (links in the parent directories resolved), and a
+ * target that is itself a symbolic link is refused. Null without --report.
  */
 async function reportTargetFor(options: CollectOptions, repoRoot: string): Promise<string | null> {
   if (options.reportPath === undefined || options.reportPath === null) return null;
   const target = resolve(options.reportPath);
-  const validations = options.validationsPath ?? null;
-  const problem = within(resolve(options.dataDir, "snapshots"), target) ? "is inside data/snapshots"
-    : validations !== null && relative(resolve(validations), target) === "" ? "is the validations file"
-    : await isDirectory(target) ? "is an existing directory"
+  const realTarget = join(await realPathOf(dirname(target)), basename(target));
+  const snapshots = await realPathOf(resolve(options.dataDir, "snapshots"));
+  const validations = options.validationsPath === undefined || options.validationsPath === null ? null
+    : await realPathOf(resolve(options.validationsPath));
+  const problem = await isSymlink(realTarget) ? "is a symbolic link"
+    : within(snapshots, realTarget) ? "is inside data/snapshots"
+    : validations !== null && relative(validations, realTarget) === "" ? "is the validations file"
+    : await isDirectory(realTarget) ? "is an existing directory"
     : null;
   if (problem !== null) {
     throw new CollectInputError(`--report ${displayPath(target, repoRoot)} ${problem}; choose a new file outside data/snapshots`);
@@ -295,9 +337,10 @@ function isCurrent(flyer: FlippFlyer, now: Date): boolean {
   return from !== null && to !== null && from <= now.getTime() && now.getTime() < to;
 }
 
+/** H9: listing text is JSON-quoted, so its control characters arrive escaped. */
 function describeFlyer(flyer: FlippFlyer, now: Date): string {
   const notes = [flyer.name.includes(WEEKLY_AD) ? null : `not a ${WEEKLY_AD}`, isCurrent(flyer, now) ? "current" : "not current"];
-  return `${flyer.id} "${flyer.name}" ${flyer.valid_from} to ${flyer.valid_to} (${notes.filter(Boolean).join(", ")})`;
+  return `${flyer.id} ${JSON.stringify(flyer.name)} ${JSON.stringify(flyer.valid_from)} to ${JSON.stringify(flyer.valid_to)} (${notes.filter(Boolean).join(", ")})`;
 }
 
 /**
@@ -473,7 +516,8 @@ async function writeSnapshot(dataDir: string, snapshot: SourceSnapshot, runId: s
     }
     await renameWithRetry(temp, target);
   } catch (error) {
-    await rm(temp, { force: true });
+    // H8: a failed cleanup must not replace the write error that caused it.
+    await rm(temp, { force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -505,17 +549,23 @@ function failureLog(error: unknown): FailureLog {
  * Outcome of a failed run. The first failure is authoritative: it is the
  * reported error, and later failures are listed after it. The status is
  * DEFERRED whenever any failure was a deferral, even when a source error came
- * first, because the deferral's nextPermittedAt is the earliest time the
- * source allows another request and retrying sooner would ignore it.
+ * first. nextPermittedAt is the latest of the deferrals' times (H6): the
+ * earliest time every deferring response allows another request, so
+ * retrying sooner would ignore one of them.
  */
 function failedOutcome(failures: unknown[]): Outcome {
   const logs = failures.map(failureLog);
-  const deferral = failures.find((error): error is FlippDeferredError => error instanceof FlippDeferredError) ?? null;
+  const deferralTimes = failures
+    .filter((error): error is FlippDeferredError => error instanceof FlippDeferredError)
+    .map((error) => error.nextPermittedAt);
+  // Compared as instants, not text: an extended-year ISO string ("+010000-...") sorts wrongly as text.
+  const nextPermittedAt = deferralTimes.reduce<string | null>(
+    (latest, time) => (latest === null || Date.parse(time) > Date.parse(latest) ? time : latest), null);
   const [first = failureLog(new Error("unknown failure")), ...others] = logs;
   return {
-    status: deferral === null ? "ERROR" : "DEFERRED",
+    status: nextPermittedAt === null ? "ERROR" : "DEFERRED",
     message: [first, ...others].map((failure) => failure.message).join("; also: "),
-    nextPermittedAt: deferral?.nextPermittedAt ?? null,
+    nextPermittedAt,
     error: first,
     otherFailures: others,
     snapshot: null,
@@ -598,10 +648,12 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     }
     const { response, receivedAt } = fetched;
     const detail = parseFlippItem(response.json);
+    // A11: identity mismatches are run-level, like a schema error.
     if (detail.id !== row.id) throw new FlippSourceError(`item detail id ${String(detail.id)} does not match requested item ${row.id}`, response.requestUrl);
     if (detail.flyer_id !== undefined && detail.flyer_id !== null && String(detail.flyer_id) !== String(flyer.id)) {
-      return excluded(`item detail flyer_id ${String(detail.flyer_id)} is not the selected flyer ${flyer.id}`);
+      throw new FlippSourceError(`item detail flyer_id ${String(detail.flyer_id)} is not the selected flyer ${flyer.id}`, response.requestUrl);
     }
+    // Classified before normalizing, so an out-of-scope item is excluded and never reaches normalizeFlipp's throw.
     const category = classifyListRow(detail);
     if (category.category === "excluded") return excluded(category.reason);
     const evidence = flippEvidence({
@@ -611,21 +663,17 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
       retrievedUrl: response.requestUrl,
       observedAt: receivedAt,
     });
-    let offer: Offer;
-    try {
-      offer = normalizeFlipp(detail, {
-        family: flyer.family,
-        retailer: flyer.retailer,
-        postalCode: POSTAL_CODE,
-        observedAt: receivedAt,
-        evidence,
-        applicability: flyer.attestation.applicability,
-        calendarRule: flyer.attestation.calendarRule,
-        startLocalTime: flyer.attestation.startLocalTime,
-      });
-    } catch (error) {
-      return excluded(`normalization failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    // A11: only 404/410 exclude a single item; a normalization failure ends the run (exit 2).
+    const offer = normalizeFlipp(detail, {
+      family: flyer.family,
+      retailer: flyer.retailer,
+      postalCode: POSTAL_CODE,
+      observedAt: receivedAt,
+      evidence,
+      applicability: flyer.attestation.applicability,
+      calendarRule: flyer.attestation.calendarRule,
+      startLocalTime: flyer.attestation.startLocalTime,
+    });
     if (offer.channel !== "in-store-ad") return excluded(`unexpected channel ${offer.channel} for a printed weekly ad`);
     return { offer };
   }
@@ -899,7 +947,15 @@ function attestationText(flyer: FlyerLog): string {
 function responsesText(log: RunLog): string {
   if (log.attempts.length === 0) return "none; no request was sent";
   if (!log.live) return "injected fetcher (test or replay data; not collected from the source by this run)";
+  // H3: claim retrieved live responses only when at least one was accepted.
+  if (log.requests.length === 0) return `no response accepted (0 accepted of ${log.attempts.length} request attempts to backflipp.wishabi.com)`;
   return `live HTTPS responses from backflipp.wishabi.com retrieved by this run (${log.requests.length} accepted of ${log.attempts.length} request attempts)`;
+}
+
+/** H5: without a verified calendar, freshness rests on the observation age alone. */
+function freshnessText(offer: Offer, now: Date): string {
+  const state = freshness(offer, now);
+  return offer.calendarRule === "unknown" ? `${state} (calendar unknown; observation age only)` : state;
 }
 
 function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
@@ -968,17 +1024,15 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
         return [
           offer.id, evidence?.sourceItemId, offer.label, offer.identity.category, rawText(offer), unitPriceText(offer), packageText(offer),
           key ?? `unknown: ${identityGaps(offer.identity).join(", ")}`, conditionsText(offer), offer.applicability, offer.calendarRule,
-          rawValidityText(offer), `${offer.startsAt ?? "unknown"} / ${offer.expiresAt ?? "unknown"}`, freshness(offer, evaluatedAt),
+          rawValidityText(offer), `${offer.startsAt ?? "unknown"} / ${offer.expiresAt ?? "unknown"}`, freshnessText(offer, evaluatedAt),
           evidence?.id, evidence?.sourceUrl, gate,
         ];
       }),
     ), "");
 
-    // Validations whose evidence IDs are all on the counted offer.
+    // H4: only the validations that count for the offer under R9.
     const countedRows = snapshot.offers.filter((offer) => counted.has(offer.id)).flatMap((offer) =>
-      snapshot.proof.validations
-        .filter((validation) => validation.offerId === offer.id &&
-          validation.evidenceIds.every((id) => offer.evidence.some((evidence) => evidence.id === id)))
+      validValidationsFor(offer, snapshot.proof.validations)
         .map((validation) => [offer.id, offer.evidence[0]?.sourceItemId, validation.checkedAt, validation.applicabilityEvidence,
           validation.calendarEvidence, validation.evidenceIds.join(", ")]));
     lines.push(`## Counted offers and validation evidence (${counted.size})`, "");

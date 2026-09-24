@@ -430,6 +430,24 @@ describe("run-wide abort signal (A12)", () => {
     await expect(fetchFlippResponse(ITEM_URL, { fetcher, signal: controller.signal })).rejects.toBe(reason);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  it("H10: an abort between hops (after the 302 arrived) stops the next hop", async () => {
+    const controller = new AbortController();
+    const reason = new Error("run stopped");
+    const fetcher = sequence(
+      () => statusResponse(302, { location: "/flipp/items/2" }),
+      () => jsonResponse("{}"),
+    );
+    const attempts: FlippAttempt[] = [];
+    // The 302 has fully arrived and been accepted as a redirect before this abort.
+    const onAttempt = (attempt: FlippAttempt) => {
+      attempts.push(attempt);
+      if (attempt.status === 302) controller.abort(reason);
+    };
+    await expect(fetchFlippResponse(ITEM_URL, { fetcher, signal: controller.signal, onAttempt })).rejects.toBe(reason);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(attempts).toEqual([expect.objectContaining({ url: ITEM_URL.href, hop: 0, status: 302, error: null })]);
+  });
 });
 
 describe("attempt audit", () => {

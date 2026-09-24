@@ -482,6 +482,19 @@ describe("F1: leftover cut-part and portion words keep different cuts apart", ()
     }
   });
 
+  it.each([
+    ["Fresh Boneless Beef Brisket Point Cut", "Fresh Boneless Beef Brisket"],
+    ["Fresh Boneless Beef Brisket Deckle", "Fresh Boneless Beef Brisket"],
+    ["Fresh Bone-In Beef Tomahawk Ribeye Steak", "Fresh Bone-In Beef Ribeye Steak"],
+    ["Fresh Bone-In Beef Cowboy Ribeye Steak", "Fresh Bone-In Beef Ribeye Steak"],
+  ])("B4: %j never shares a key with %j", (qualified, plain) => {
+    const left = meat(qualified);
+    const right = meat(plain);
+    expect(left).toMatchObject({ species: known("beef"), cut: unknown });
+    expect(comparisonKey(left)).toBeNull();
+    expect(comparisonKey(right)).not.toBeNull();
+  });
+
   it("chicken breast strips never share a key with whole breasts", () => {
     const strips = meat("Fresh Boneless Skinless Chicken Breast Strips");
     const breasts = meat("Fresh Boneless Skinless Chicken Breasts");
@@ -499,10 +512,32 @@ describe("F1: leftover cut-part and portion words keep different cuts apart", ()
     "Fresh Boneless Pork Belly Slices",
     "Fresh Bone-In Skin-On Chicken Wing Flats",
     "Fresh Whole Chicken Cut Up",
+    "Fresh Boneless Beef Brisket Point Cut",
+    "Fresh Boneless Beef Brisket Deckle",
+    "Fresh Bone-In Beef Tomahawk Ribeye Steak",
+    "Fresh Bone-In Beef Cowboy Ribeye Steak",
   ])("a leftover part or portion word makes %j unknown", (name) => {
     const identity = meat(name);
     expect(identity).toMatchObject({ cut: unknown });
     expect(comparisonKey(identity)).toBeNull();
+  });
+
+  it.each([
+    "Chicken Wing Drummettes",
+    "Fresh Bone-In Skin-On Chicken Wing Drummettes",
+    "Fresh Bone-In Skin-On Chicken Drummettes",
+  ])("B4: %j is a drumette or unknown, never a plain wing", (name) => {
+    const identity = meat(name);
+    expect(identity).toMatchObject({ species: known("chicken") });
+    expect(identity.category === "meat" ? identity.cut : null).not.toEqual(known("wing"));
+    expect([known("drumette"), unknown]).toContainEqual(identity.category === "meat" ? identity.cut : null);
+    const wing = meat("Fresh Bone-In Skin-On Chicken Wings");
+    expect(comparisonKey(identity)).not.toBe(comparisonKey(wing));
+  });
+
+  it("B4: drummettes and drumettes spell the same cut", () => {
+    expect(meat("Fresh Bone-In Skin-On Chicken Drummettes")).toMatchObject({ cut: known("drumette") });
+    expect(meat("Fresh Bone-In Skin-On Chicken Drumettes")).toMatchObject({ cut: known("drumette") });
   });
 
   it("generic steak, roast, ribs and chops classify as meat but never key", () => {

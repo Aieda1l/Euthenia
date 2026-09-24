@@ -88,12 +88,20 @@ export function flippEvidence(input: {
 // Units (R5)
 // ---------------------------------------------------------------------------
 
+/** Offset and length of a phrase in the raw description. */
+interface TextRange {
+  index: number;
+  length: number;
+}
+
 interface Units {
   unitPrice: Offer["unitPrice"];
   packageMassLb: Rational | null;
   packageCount: number | null;
   packageTotalCents: number | null;
   issues: string[];
+  /** B1: the package-total phrase(s) accepted as consistent; only these are not conditions. */
+  acceptedPackagePhrases: TextRange[];
 }
 
 // Quantities are canonical numbers, (0|[1-9]\d*) with an optional fraction;
@@ -105,8 +113,11 @@ const N_FOR = /(?<![\d.])(0|[1-9]\d*) for\b/;
 const MAX_MULTI_BUY = 100;
 const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
 const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
-// N4: the amount may not continue with a digit or ".", so "$14.975" never parses as $14.
-const PACKAGE_TOTAL = /(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b[^$]*?\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?![\d.])/i;
+// N4/B2: the amount may not continue with a digit or with "." and a digit, so
+// "$14.975" never parses as $14 or $14.97, while a sentence-final "$8.97." does.
+// B1: the text between mass and price may not hold another "N lb", so each
+// total takes its nearest mass ("1 lb or 3 lb ... for $8.97" is 3 lb).
+const PACKAGE_TOTAL = /(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b(?:(?!\d+(?:\.\d+)?\s*lbs?\b)[^$])*?\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)/gi;
 const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?\s*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
 const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bpints?\b/, "pint"],
@@ -116,8 +127,8 @@ const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:clamshells?|containers?|baskets?|box|boxes)\b/, "container"],
 ];
 const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?\s*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
-const STATED_MASS = /\b\d+(?:\.\d+)?\s*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/;
-const STATED_COUNT = /(?<![\d.])(0|[1-9]\d*)\s*(?:ct|count)\b/;
+const STATED_MASS = /\b\d+(?:\.\d+)?\s*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/g;
+const STATED_COUNT = /(?<![\d.])(0|[1-9]\d*)\s*(?:ct|count)\b/g;
 
 // Loyalty phrases shared by the R6 condition rules and the A5 price vocabulary.
 const NO_LOYALTY = /\bno (?:card|membership) (?:needed|required)\b/g;
@@ -195,13 +206,24 @@ function normalizeUnits(item: Record<string, unknown>): Units {
     issues.push(`leading-zero quantity "${leadingZero[0]}" is not a canonical number; unit price unknown`);
     blocked = true;
   }
-  const countMatch = STATED_COUNT.exec(normalizeText(`${name} ${description}`));
+  // B1: a count is the package count only when it is the only package size
+  // stated. Several distinct counts, or a count beside a mass ("Kiwi 1 lb or
+  // Apple Pears 3 ct"), may belong to different packages or alternatives.
+  const sizeText = normalizeText(`${name} ${description}`);
+  const countMatches = [...sizeText.matchAll(STATED_COUNT)];
+  const massMatches = [...sizeText.matchAll(STATED_MASS)];
+  const counts = new Set(countMatches.map((match) => match[1]));
   let packageCount: number | null = null;
-  if (countMatch) {
-    const count = Number(countMatch[1]);
+  let countAmbiguous = false;
+  if (counts.size > 1 || (counts.size === 1 && massMatches.length > 0)) {
+    const sizes = [...massMatches, ...countMatches].sort((a, b) => a.index - b.index).map((match) => JSON.stringify(match[0]));
+    issues.push(`several package sizes stated (${sizes.join(", ")}); package count unknown`);
+    countAmbiguous = true;
+  } else if (countMatches[0]) {
+    const count = Number(countMatches[0][1]);
     if (Number.isSafeInteger(count)) packageCount = count;
     else {
-      issues.push(`package count "${countMatch[0]}" is out of range`);
+      issues.push(`package count "${countMatches[0][0]}" is out of range`);
       blocked = true;
     }
   }
@@ -253,7 +275,7 @@ function normalizeUnits(item: Record<string, unknown>): Units {
     issues.push(`size range "${range[0]}" cannot support a precise unit price`);
     blocked = true;
   }
-  if (basis === "each" && STATED_MASS.test(normalizeText(`${name} ${description}`))) {
+  if (basis === "each" && massMatches.length > 0) {
     issues.push("each-priced item states a package mass; not converted");
     blocked = true;
   }
@@ -261,25 +283,51 @@ function normalizeUnits(item: Record<string, unknown>): Units {
     issues.push(`each-priced item states a package count (${packageCount}); not converted`);
     blocked = true;
   }
+  if (basis === "each" && countAmbiguous) {
+    issues.push("each-priced item states several package sizes; not converted");
+    blocked = true;
+  }
 
+  // R5 package totals ("3 lb ... for $14.97"). B1: every stated option is read.
+  // Package terms are set, and the phrase stops being a condition, only for a
+  // single option that agrees with a known per-lb price. Several distinct
+  // options, or one that contradicts the price, leave everything unknown.
+  const acceptedPackagePhrases: TextRange[] = [];
   if (basis === "lb" && packageMassLb === null) {
-    const total = PACKAGE_TOTAL.exec(description);
-    if (total) {
-      const mass = pounds(total[1] ?? "", "lb");
-      const totalCents = usdCents(total[2] ?? "");
-      if (totalCents !== null && compareRational(mass, makeRational(0)) > 0) {
-        packageMassLb = mass;
-        packageTotalCents = totalCents;
-        if (cents !== null) {
-          // Consistent when price x mass is within one cent of the stated total (rounding).
-          const expected = multiplyRational(makeRational(cents), mass);
-          const consistent = compareRational(expected, makeRational(totalCents - 1)) > 0 &&
-            compareRational(expected, makeRational(totalCents + 1)) < 0;
-          if (!consistent) {
-            issues.push(`package total ${total[2]} for ${total[1]} lb contradicts the per-lb price`);
-            blocked = true;
-          }
-        }
+    const options = [...description.matchAll(PACKAGE_TOTAL)].map((match) => {
+      const massText = match[1] ?? "";
+      const totalText = match[2] ?? "";
+      return {
+        massText,
+        totalText,
+        mass: pounds(massText, "lb"),
+        totalCents: usdCents(totalText),
+        range: { index: match.index, length: match[0].length },
+      };
+    });
+    type Option = (typeof options)[number];
+    const same = (a: Option, b: Option) => a.totalCents === b.totalCents && compareRational(a.mass, b.mass) === 0;
+    const distinct = options.filter((option, index) => options.findIndex((other) => same(other, option)) === index);
+    const only = distinct.length === 1 ? distinct[0] : undefined;
+    const label = (option: Option) => `${option.massText} lb for $${option.totalText}`;
+    if (distinct.length > 1) {
+      issues.push(`description states ${distinct.length} package options (${distinct.map(label).join("; ")}); package terms and unit price unknown`);
+      blocked = true;
+    } else if (only && (only.totalCents === null || compareRational(only.mass, makeRational(0)) <= 0)) {
+      issues.push(`package total "${label(only)}" has no positive mass; package terms and unit price unknown`);
+      blocked = true;
+    } else if (only && only.totalCents !== null && cents !== null) {
+      // Consistent when price x mass is within one cent of the stated total (rounding).
+      const expected = multiplyRational(makeRational(cents), only.mass);
+      const consistent = compareRational(expected, makeRational(only.totalCents - 1)) > 0 &&
+        compareRational(expected, makeRational(only.totalCents + 1)) < 0;
+      if (consistent) {
+        packageMassLb = only.mass;
+        packageTotalCents = only.totalCents;
+        acceptedPackagePhrases.push(...options.filter((option) => same(option, only)).map((option) => option.range));
+      } else {
+        issues.push(`package total ${only.totalText} for ${only.massText} lb contradicts the per-lb price; package terms and unit price unknown`);
+        blocked = true;
       }
     }
   }
@@ -287,7 +335,7 @@ function normalizeUnits(item: Record<string, unknown>): Units {
   const unitPrice = basis !== null && cents !== null && !blocked
     ? { basis, cents: divideRational(makeRational(cents), divisor) }
     : null;
-  return { unitPrice, packageMassLb, packageCount, packageTotalCents, issues };
+  return { unitPrice, packageMassLb, packageCount, packageTotalCents, issues, acceptedPackagePhrases };
 }
 
 // ---------------------------------------------------------------------------
@@ -321,8 +369,13 @@ const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (groups: MatchGroups, sta
 const CONDITION_FILLER = /\b(?:price|prices|only|and|with|sale|special)\b/g;
 // A6: purchase, spend, required, additional and any $amount also signal conditions.
 const CONDITION_INDICATOR = /\b(?:limit|members?|card|coupons?|digital|clip|must|buy|get|free|bogo|save|off|min(?:imum)?|rebate|rewards?|points|mix (?:and|&) match|equal or lesser|purchases?|spend|required|additional)\b|\$\s*\d/;
-// R5 package totals ("3 lb ... for $14.97") are price statements, not conditions.
-const PACKAGE_TOTAL_PHRASE = new RegExp(PACKAGE_TOTAL.source, "gi");
+
+/** The text with each range blanked out. */
+function blankRanges(text: string, ranges: readonly TextRange[]): string {
+  let out = text;
+  for (const { index, length } of ranges) out = `${out.slice(0, index)}${" ".repeat(length)}${out.slice(index + length)}`;
+  return out;
+}
 
 /** Applies recognized phrases; returns the unrecognized remainder. */
 function applyConditionRules(segment: string, state: ConditionState): string {
@@ -336,7 +389,12 @@ function applyConditionRules(segment: string, state: ConditionState): string {
   return rest;
 }
 
-function parseConditions(item: Record<string, unknown>): Conditions {
+/**
+ * `acceptedPackagePhrases` are the R5 package totals accepted by
+ * normalizeUnits: price statements, not conditions (B1). Any other package
+ * phrase or `$amount` in the description is unrecognized condition text.
+ */
+function parseConditions(item: Record<string, unknown>, acceptedPackagePhrases: readonly TextRange[]): Conditions {
   const state: ConditionState = { loyalty: new Set(), coupon: new Set(), minimum: new Set(), maximum: new Set() };
   const kept: string[] = [];
   let complete = true;
@@ -352,7 +410,7 @@ function parseConditions(item: Record<string, unknown>): Conditions {
   }
 
   const description = text(item.description);
-  const descriptionText = description === null ? "" : normalizeText(description).replace(PACKAGE_TOTAL_PHRASE, " ");
+  const descriptionText = description === null ? "" : normalizeText(blankRanges(description, acceptedPackagePhrases));
   if (description !== null && CONDITION_INDICATOR.test(descriptionText)) {
     kept.push(description);
     if (CONDITION_INDICATOR.test(applyConditionRules(descriptionText, state))) complete = false;
@@ -458,7 +516,7 @@ export function normalizeFlipp(item: Record<string, unknown>, context: FlippCont
     packageMassLb: units.packageMassLb,
     packageCount: units.packageCount,
     packageTotalCents: units.packageTotalCents,
-    conditions: parseConditions(item),
+    conditions: parseConditions(item, units.acceptedPackagePhrases),
     evidence: [{ ...context.evidence, rawValidity: { ...context.evidence.rawValidity } }],
     observedAt: context.observedAt,
     startsAt: calendar.startsAt,

@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { REQUIRED_VERIFIED_FIELDS, type Family, type SourceSnapshot, type ValidationFile } from "../../src/shared/contracts.js";
 import { comparisonKey } from "../../src/shared/identity.js";
-import { collect, parseCollectArgs, type CollectOptions } from "../../src/source/collect.js";
+import { collect, parseCollectArgs, terminalSafe, type CollectOptions } from "../../src/source/collect.js";
 import { checkProof } from "../../src/source/proof.js";
 import { item } from "../fixtures/source.js";
 
@@ -14,8 +14,9 @@ import { item } from "../fixtures/source.js";
 // research fixture records or clearly synthetic records. Nothing here is a
 // live run, and all writes go to a per-test temporary directory.
 
-// Snapshot renames can be made to fail with chosen error codes (item 9 retry).
-const renames = vi.hoisted(() => ({ failures: [] as string[], calls: 0 }));
+// Snapshot renames can be made to fail with chosen error codes (item 9 retry),
+// and the temp-file cleanup rm with another (H8).
+const renames = vi.hoisted(() => ({ failures: [] as string[], calls: 0, rmFailure: null as string | null }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -25,6 +26,24 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const code = renames.failures.shift();
       if (code !== undefined) throw Object.assign(new Error(`${code}: simulated rename failure`), { code });
       return actual.rename(from, to);
+    },
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      const code = renames.rmFailure;
+      if (code !== null) throw Object.assign(new Error(`${code}: simulated rm failure`), { code });
+      return actual.rm(...args);
+    },
+  };
+});
+
+// normalizeFlipp can be made to throw for chosen item IDs (H1).
+const normalizeFailures = vi.hoisted(() => ({ ids: new Set<number>() }));
+vi.mock("../../src/source/normalize.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/source/normalize.js")>();
+  return {
+    ...actual,
+    normalizeFlipp: (...args: Parameters<typeof actual.normalizeFlipp>) => {
+      if (normalizeFailures.ids.has(Number(args[0].id))) throw new Error("simulated normalization failure");
+      return actual.normalizeFlipp(...args);
     },
   };
 });
@@ -187,6 +206,8 @@ beforeEach(() => {
   repoDataExisted = existsSync(repoData);
   renames.failures = [];
   renames.calls = 0;
+  renames.rmFailure = null;
+  normalizeFailures.ids.clear();
 });
 
 afterEach(() => {
@@ -403,12 +424,31 @@ describe("item collection", () => {
     expect(result.snapshot?.offers.some((offer) => offer.id === `flipp:kroger:${id}`)).toBe(false);
   });
 
-  it("excludes an item detail that names a different flyer", async () => {
+  it("B3: an item detail that names a different flyer is a run-level source error (A11)", async () => {
+    seedPriorSnapshot();
     const world = fixtureWorld();
     const id = SAFEWAY_ITEMS[0];
     world.map.set(itemUrl(id), JSON.stringify({ item: { ...item(id), flyer_id: 1 } }));
     const result = await run(routes(world.map).fetcher);
-    expect(excludedRows(result.auditDir).find((entry) => entry.itemId === id)).toMatchObject({ stage: "detail", reason: expect.stringMatching(/flyer_id 1 is not the selected flyer/) });
+    expect(result.status).toBe("ERROR");
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toMatch(new RegExp(`item detail flyer_id 1 is not the selected flyer ${SAFEWAY_FLYER}`));
+    expect(diagnostics(result.auditDir)).toMatchObject({ status: "ERROR", exitCode: 2, error: { name: "FlippSourceError", url: itemUrl(id) } });
+    expect(excludedRows(result.auditDir).some((entry) => entry.itemId === id)).toBe(false);
+    expectPriorSnapshotPreserved();
+  });
+
+  it("H1: a normalization failure ends the run as a source error, never a per-item exclusion", async () => {
+    seedPriorSnapshot();
+    const world = fixtureWorld();
+    const id = SAFEWAY_ITEMS[1];
+    normalizeFailures.ids.add(id);
+    const result = await run(routes(world.map).fetcher);
+    expect(result.status).toBe("ERROR");
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toMatch(/simulated normalization failure/);
+    expect(excludedRows(result.auditDir).some((entry) => entry.itemId === id)).toBe(false);
+    expectPriorSnapshotPreserved();
   });
 
   it("requests a repeated list row once and records the duplicate", async () => {
@@ -470,6 +510,27 @@ describe("per-item and list-row failures (A11)", () => {
     expect(result.message).toMatch(/404/);
   });
 
+  it.each<[string, Body, RegExp]>([
+    ["a schema error", JSON.stringify({ item: { ...item(SAFEWAY_ITEMS[0]), name: 42 } }), /schema: item detail item\.name is not a string/],
+    ["an HTML page on 200", () => new Response("<html>bot check</html>", { status: 200, headers: { "content-type": "text/html" } }), /HTML page instead of JSON/],
+    ["a wrong content-type", () => new Response(JSON.stringify({ item: item(SAFEWAY_ITEMS[0]) }), { status: 200, headers: { "content-type": "text/plain" } }), /content-type "text\/plain" is not application\/json/],
+    ["invalid UTF-8", () => new Response(new Uint8Array([0x7b, 0xff, 0x7d]), { status: 200, headers: { "content-type": "application/json" } }), /not valid UTF-8/],
+    ["malformed JSON", "{ nope", /malformed JSON/],
+    ["5xx after retries", () => new Response(null, { status: 503, headers: { "retry-after": "0" } }), /HTTP 503 after 2 retries/],
+    ["a transport failure", () => { throw new TypeError("fetch failed"); }, /request failed: fetch failed/],
+  ])("H2: an item detail with %s is a run-level source error (exit 2)", async (_label, body, message) => {
+    seedPriorSnapshot();
+    const world = fixtureWorld();
+    world.map.set(itemUrl(SAFEWAY_ITEMS[0]), body);
+    const result = await run(routes(world.map).fetcher);
+    expect(result.status).toBe("ERROR");
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toMatch(message);
+    expect(diagnostics(result.auditDir)).toMatchObject({ status: "ERROR", exitCode: 2, error: { name: "FlippSourceError" } });
+    expect(excludedRows(result.auditDir).some((entry) => entry.itemId === SAFEWAY_ITEMS[0])).toBe(false);
+    expectPriorSnapshotPreserved();
+  });
+
   it("an item-detail id mismatch is a run-level source error", async () => {
     const world = fixtureWorld();
     const id = SAFEWAY_ITEMS[2];
@@ -506,7 +567,9 @@ describe("deferral and run-wide abort (A12)", () => {
     seedPriorSnapshot();
     const world = fixtureWorld();
     const [a, b] = QFC_ITEMS;
-    world.map.set(itemUrl(a), () => new Response(null, DEFERRAL));
+    // H10: the deferral arrives a macrotask later, so b's 503 has certainly
+    // arrived and b is waiting to retry when the deferral stops the run.
+    world.map.set(itemUrl(a), () => new Promise<Response>((settle) => setImmediate(() => settle(new Response(null, DEFERRAL)))));
     let bCalls = 0;
     const bBody = world.bodies.get(b) ?? "";
     world.map.set(itemUrl(b), () => (bCalls++ === 0 ? new Response(null, { status: 503 }) : jsonResponse(bBody)));
@@ -517,6 +580,8 @@ describe("deferral and run-wide abort (A12)", () => {
     expect(result.nextPermittedAt).toBe(NEXT_PERMITTED);
     expect(requested.filter((url) => url === itemUrl(a))).toHaveLength(1);
     expect(requested.filter((url) => url === itemUrl(b))).toHaveLength(1);
+    const attempts = diagnostics(result.auditDir).attempts as Array<Record<string, unknown>>;
+    expect(attempts).toContainEqual(expect.objectContaining({ url: itemUrl(b), status: 503, error: expect.stringMatching(/retry 1 of 2/) }));
     // Only the two workers' first items were ever requested.
     expect(requested.filter((url) => url.includes("/flipp/items/")).sort()).toEqual([itemUrl(a), itemUrl(b)].sort());
     expectPriorSnapshotPreserved();
@@ -539,7 +604,9 @@ describe("deferral and run-wide abort (A12)", () => {
     const result = await run(fetcher);
     expect(result.status).toBe("ERROR");
     expect(result.message).toMatch(/403/);
-    expect(result.message).not.toMatch(/aborted/);
+    // H10: the abort it caused is never recorded as another failure.
+    expect(result.message).not.toMatch(/stopped/);
+    expect(diagnostics(result.auditDir).otherFailures).toEqual([]);
     expect(aSignal?.aborted).toBe(true);
     expect(requested.filter((url) => url.includes("/flipp/items/"))).toHaveLength(2);
   });
@@ -560,6 +627,56 @@ describe("deferral and run-wide abort (A12)", () => {
     const report = auditReport(result.auditDir);
     expect(report).toContain(NEXT_PERMITTED);
     expect(report).toMatch(/does not match requested item/);
+  });
+
+  /**
+   * Both item requests are in flight; once both are sent, their replies are
+   * settled in the given order in one step. The replies share a code path, so
+   * each is judged before either failure stops the run, in that order.
+   */
+  function settleTogether(world: ReturnType<typeof fixtureWorld>, first: [number, () => Response], second: [number, () => Response]): void {
+    let settleFirst: (() => void) | undefined;
+    world.map.set(itemUrl(first[0]), () => new Promise<Response>((settle) => { settleFirst = () => settle(first[1]()); }));
+    world.map.set(itemUrl(second[0]), () => new Promise<Response>((settle) => {
+      setImmediate(() => {
+        settleFirst?.();
+        settle(second[1]());
+      });
+    }));
+  }
+
+  it("H10: a source error followed by a deferral is DEFERRED with the next permitted time", async () => {
+    seedPriorSnapshot();
+    const world = fixtureWorld();
+    const [a, b] = QFC_ITEMS;
+    settleTogether(world, [a, () => new Response(null, { status: 403 })], [b, () => new Response(null, DEFERRAL)]);
+    const result = await run(routes(world.map).fetcher);
+    expect(result.status).toBe("DEFERRED");
+    expect(result.exitCode).toBe(3);
+    expect(result.nextPermittedAt).toBe(NEXT_PERMITTED);
+    const diag = diagnostics(result.auditDir);
+    // The source error came first and stays the reported error.
+    expect(diag.error).toMatchObject({ name: "FlippSourceError", status: 403, url: itemUrl(a) });
+    expect(diag.otherFailures).toEqual([expect.objectContaining({ name: "FlippDeferredError", status: 429 })]);
+    expect(result.message).toMatch(/^unexpected HTTP 403.*; also: HTTP 429/);
+    expectPriorSnapshotPreserved();
+  });
+
+  it("H6: with several deferrals, nextPermittedAt is the latest of them", async () => {
+    const world = fixtureWorld();
+    const [a, b] = QFC_ITEMS;
+    settleTogether(world,
+      [a, () => new Response(null, { status: 429, headers: { "retry-after": "120" } })],
+      [b, () => new Response(null, { status: 503, headers: { "retry-after": "600" } })]);
+    const result = await run(routes(world.map).fetcher);
+    expect(result.status).toBe("DEFERRED");
+    expect(result.exitCode).toBe(3);
+    const diag = diagnostics(result.auditDir);
+    expect(diag.error).toMatchObject({ name: "FlippDeferredError", status: 429 });
+    expect(diag.otherFailures).toEqual([expect.objectContaining({ name: "FlippDeferredError", status: 503 })]);
+    expect(result.nextPermittedAt).toBe("2026-09-24T19:10:00.000Z");
+    expect(diag.nextPermittedAt).toBe("2026-09-24T19:10:00.000Z");
+    expect(auditReport(result.auditDir)).toContain("Next permitted request: 2026-09-24T19:10:00.000Z");
   });
 });
 
@@ -662,6 +779,36 @@ describe("gate outcomes and snapshot preservation", () => {
     const key = left ? comparisonKey(left.identity) : null;
     expect(key).not.toBeNull();
     expect(section(report, "Counted pairs")).toContain(`| flipp:kroger:7009 | flipp:albertsons:8009 | meat | ${String(key).split("|").join("\\|")} | lb |`);
+
+    // H5: a verified calendar shows the bare freshness state.
+    const offersSection = section(report, "In-scope offers");
+    expect(offersSection.find((line) => line.startsWith("| flipp:kroger:7001 |"))).toMatch(/\| fresh \|/);
+  });
+
+  it("H4: the counted-offers table lists only validations that are valid for the offer", async () => {
+    const world = syntheticWorld();
+    const [valid] = world.file.validations;
+    if (!valid) throw new Error("synthetic world has no validations");
+    const invalid = { ...valid, checkedAt: "2026-09-24T18:45:00.000Z", verifiedFields: [], applicabilityEvidence: "invalid extra validation" };
+    const file = { ...world.file, validations: [...world.file.validations, invalid] };
+    const result = await run(routes(world.map).fetcher, { validationsPath: writeValidations(file) });
+    expect(result.status).toBe("PASS");
+    const counted = section(auditReport(result.auditDir), "Counted offers");
+    expect(counted.filter((line) => line.startsWith(`| ${valid.offerId} |`))).toHaveLength(1);
+    expect(counted.join("\n")).not.toContain("invalid extra validation");
+    expect(counted.filter((line) => line.startsWith("| flipp:"))).toHaveLength(20);
+  });
+
+  it("H5: with an unknown calendar the freshness cell says it rests on observation age only", async () => {
+    const result = await run(routes(fixtureWorld().map).fetcher);
+    expect(result.status).toBe("BLOCKED");
+    const rows = section(auditReport(result.auditDir), "In-scope offers").filter((line) => line.startsWith("| flipp:"));
+    expect(rows).toHaveLength(6);
+    for (const row of rows) {
+      // Starts / expires, then Freshness.
+      expect(row).toContain("| unknown / unknown | fresh (calendar unknown; observation age only) |");
+      expect(row).not.toMatch(/\| fresh \|/);
+    }
   });
 
   it("an attestation for another flyer ID verifies nothing, so the run is BLOCKED", async () => {
@@ -753,6 +900,14 @@ describe("report text safety", () => {
     const result = await collect({ postalCode: "98105", dataDir, clock });
     expect(result.exitCode).toBe(2);
     expect(result.message).toMatch(/disabled in tests/);
+  });
+
+  it("H3: a live run with no accepted response gives neutral counts, not retrieved live responses", async () => {
+    const result = await collect({ postalCode: "98105", dataDir, clock });
+    const line = auditReport(result.auditDir).split("\n").find((entry) => entry.startsWith("- Responses:")) ?? "";
+    expect(line).not.toMatch(/live HTTPS responses/);
+    expect(line).not.toMatch(/retrieved/);
+    expect(line).toBe("- Responses: no response accepted (0 accepted of 1 request attempts to backflipp.wishabi.com)");
   });
 
   it("shows the validations path relative to the repository root, or as a basename", async () => {
@@ -857,6 +1012,108 @@ describe("inputs", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expectPriorSnapshotPreserved();
     if (paths.validationsPath) expect(readFileSync(paths.validationsPath, "utf8")).toBe(before);
+  });
+
+  /** Creates a symlink, or returns false where the platform does not allow it. */
+  function trySymlink(target: string, path: string, type: "file" | "dir"): boolean {
+    try {
+      symlinkSync(target, path, type);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it.for<[string, () => { link: string; target: string; type: "file" | "dir"; reportPath: string; validationsPath?: string }, RegExp]>([
+    ["a symlink to the snapshot", () => ({ link: join(root, "proof.md"), target: snapshotPath, type: "file", reportPath: join(root, "proof.md") }), /is a symbolic link/],
+    ["a symlink to the validations file", () => {
+      const validationsPath = writeValidations(syntheticWorld().file);
+      return { link: join(root, "proof.md"), target: validationsPath, type: "file", reportPath: join(root, "proof.md"), validationsPath };
+    }, /is a symbolic link/],
+    ["inside a symlinked directory whose real path is data/snapshots", () => ({
+      link: join(root, "snaps"), target: join(dataDir, "snapshots"), type: "dir", reportPath: join(root, "snaps", "proof.md"),
+    }), /is inside data\/snapshots/],
+    ["the validations file through a symlinked directory", () => {
+      const validationsPath = writeValidations(syntheticWorld().file);
+      return { link: join(root, "alias"), target: root, type: "dir", reportPath: join(root, "alias", "validations.json"), validationsPath };
+    }, /is the validations file/],
+  ])("H7: a --report path that is %s exits 2 before any request", async ([, setup, problem], context) => {
+    seedPriorSnapshot();
+    const { link, target, type, reportPath, validationsPath } = setup();
+    if (!trySymlink(target, link, type)) {
+      context.skip(); // symlinks not permitted here (for example Windows without developer mode)
+      return;
+    }
+    const before = validationsPath ? readFileSync(validationsPath, "utf8") : null;
+    const { fetcher } = routes(syntheticWorld().map);
+    const result = await run(fetcher, { reportPath, validationsPath });
+    expect(result.status).toBe("ERROR");
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toMatch(/--report/);
+    expect(result.message).toMatch(problem);
+    expect(result.message).not.toContain(root);
+    expect(result.reportWritten).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(readFileSync(snapshotPath, "utf8")).toBe(PRIOR_SNAPSHOT);
+    if (validationsPath) expect(readFileSync(validationsPath, "utf8")).toBe(before);
+  });
+
+  it("H7: a --report path under a symlinked directory elsewhere is still allowed", async (context) => {
+    const elsewhere = join(root, "real-reports");
+    mkdirSync(elsewhere);
+    if (!trySymlink(elsewhere, join(root, "reports-link"), "dir")) {
+      context.skip();
+      return;
+    }
+    const result = await run(routes(fixtureWorld().map).fetcher, { reportPath: join(root, "reports-link", "new", "proof.md") });
+    expect(result.status).toBe("BLOCKED");
+    expect(result.reportWritten).toBe(true);
+    expect(readFileSync(join(elsewhere, "new", "proof.md"), "utf8")).toMatch(/Status: BLOCKED/);
+  });
+});
+
+describe("snapshot temp-file cleanup (H8)", () => {
+  it("a failing cleanup never masks the original write error", async () => {
+    seedPriorSnapshot();
+    renames.failures = ["EXDEV"];
+    renames.rmFailure = "EBUSY";
+    const world = syntheticWorld();
+    const result = await run(routes(world.map).fetcher, { validationsPath: writeValidations(world.file) });
+    expect(result.status).toBe("ERROR");
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toMatch(/EXDEV: simulated rename failure/);
+    expect(result.message).not.toMatch(/simulated rm failure/);
+    expect(readFileSync(snapshotPath, "utf8")).toBe(PRIOR_SNAPSHOT);
+  });
+});
+
+describe("terminal safety (H9)", () => {
+  /* eslint-disable no-control-regex -- these patterns detect control characters on purpose */
+  const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/;
+  const C0_CONTROLS = /[\u0000-\u001f]/;
+  /* eslint-enable no-control-regex */
+
+  it("terminalSafe escapes C0, DEL and C1 controls and keeps other text", () => {
+    expect(terminalSafe("PASS: ok é✓")).toBe("PASS: ok é✓");
+    expect(terminalSafe("a\u001b[2Jb\rc\nd\u007fe\u009bf\u0000")).toBe("a\\u001b[2Jb\\u000dc\\u000ad\\u007fe\\u009bf\\u0000");
+    expect(terminalSafe("x\u001b]0;title\u0007")).not.toMatch(CONTROLS);
+  });
+
+  it("the flyer-selection error quotes listing names with their control characters escaped", async () => {
+    const hostile = "Weekly Ad\u001b[2J\u001b]0;pwned\u0007\r\nPASS: forged";
+    const world = fixtureWorld([flyer(8000001, "QFC", hostile, EXPIRED), flyer(SAFEWAY_FLYER, "Safeway", "Weekly Ad", CURRENT)]);
+    const result = await run(routes(world.map).fetcher);
+    expect(result.exitCode).toBe(2);
+    expect(result.message).toContain(JSON.stringify(hostile));
+    expect(result.message).not.toMatch(C0_CONTROLS);
+    expect(terminalSafe(result.message)).not.toMatch(CONTROLS);
+  });
+
+  it("C1 controls in a listing name are escaped for the terminal", async () => {
+    const world = fixtureWorld([flyer(8000001, "QFC", "Weekly Ad\u009b2J", EXPIRED), flyer(SAFEWAY_FLYER, "Safeway", "Weekly Ad", CURRENT)]);
+    const result = await run(routes(world.map).fetcher);
+    expect(terminalSafe(result.message)).toContain("Weekly Ad\\u009b2J");
+    expect(terminalSafe(result.message)).not.toMatch(CONTROLS);
   });
 });
 

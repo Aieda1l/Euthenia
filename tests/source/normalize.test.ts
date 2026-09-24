@@ -480,3 +480,126 @@ describe("second fix round: price wording, package totals and coupons (synthetic
     expect(offer.normalizationIssue).toMatch(/price_text wording "for"/);
   });
 });
+
+describe("final fix round: several package options and sentence-final totals (B1, B2)", () => {
+  // Live text (QFC item 1039880797, 2026-09-24 run): two package options; the
+  // 1 lb option ($8.99) contradicts the $7.99/lb price.
+  const QFC_93_LEAN = {
+    id: 1039880797,
+    name: "Kroger 93% Lean Ground Beef",
+    current_price: "7.99",
+    price_text: "/lb With Card",
+  };
+
+  it.each([
+    ["as served, with line breaks", "Sold in a 3 lb Package\nfor $23.97 or\n1 lb Package for $8.99 each"],
+    ["on one line", "Sold in a 3 lb Package for $23.97 or 1 lb Package for $8.99 each"],
+  ])("B1: two package options (%s) give null unit price and package terms with an issue", (_label, description) => {
+    const offer = normalize(synthetic({ ...QFC_93_LEAN, description }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/2 package options.*3 lb for \$23\.97.*1 lb for \$8\.99/);
+    // Neither package phrase was accepted, so its $amounts leave the conditions incomplete.
+    expect(offer.conditions.complete).toBe(false);
+    expect(offer.conditions.loyaltyRequired).toBe(true);
+  });
+
+  it("B1: two options that each agree with the per-lb price are still two options", () => {
+    const offer = normalize(synthetic({
+      name: "Fresh 93% Lean Ground Beef", price_text: "lb", current_price: "2.99",
+      description: "3 lb Package for $8.97 or 1 lb Package for $2.99",
+    }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/2 package options/);
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it("B1: a contradicting single package total nulls the package terms too", () => {
+    const offer = normalize(synthetic({ name: "Fresh Lean Ground Beef", description: "80% Sold in a 3 lb pack for $12.00", price_text: "lb", current_price: "4.99" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/package total 12\.00 for 3 lb contradicts/);
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it("B1: only the accepted package phrase is stripped; any other $amount leaves conditions incomplete", () => {
+    const accepted = normalize(synthetic({ name: "Fresh 93% Lean Ground Beef", price_text: "lb", current_price: "2.99", description: "3 lb Package for $8.97" }));
+    expect(accepted.unitPrice).toEqual({ basis: "lb", cents: { n: "299", d: "1" } });
+    expect(accepted.packageTotalCents).toBe(897);
+    expect(accepted.conditions.complete).toBe(true);
+
+    const extra = normalize(synthetic({ name: "Fresh 93% Lean Ground Beef", price_text: "lb", current_price: "2.99", description: "3 lb Package for $8.97, reg. $10.47" }));
+    expect(extra.unitPrice).toEqual({ basis: "lb", cents: { n: "299", d: "1" } });
+    expect(extra.packageTotalCents).toBe(897);
+    expect(extra.conditions.complete).toBe(false);
+  });
+
+  it("B1: a package total takes the mass nearest its price, never an earlier option's mass", () => {
+    // "1 lb or 3 lb ... for $8.97" states 3 lb for $8.97, which contradicts $8.97/lb.
+    const offer = normalize(synthetic({ name: "Fresh 93% Lean Ground Beef", price_text: "lb", current_price: "8.97", description: "1 lb or 3 lb Package for $8.97" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/package total 8\.97 for 3 lb contradicts/);
+  });
+
+  it("B1: a package total on an each-priced item is never stripped from the conditions", () => {
+    const offer = normalize(synthetic({ name: "Fresh 93% Lean Ground Beef", price_text: "ea", current_price: "8.97", description: "3 lb Package for $8.97" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it.each([
+    ["as served", "Zespri Sungold Kiwi 1 lb or Signature Farms® Apple Pears 3 ct"],
+    ["as quoted in review", "Zespri Sungold Kiwi 1 lb or Signature Farms Apple Pears 3 ct"],
+  ])("B1: a count stated beside another package size (%s) gives packageCount null with an issue", (_label, name) => {
+    // Live text (Safeway item 1040925140, 2026-09-24 run): the 3 ct belongs to one alternative only.
+    const offer = normalize(synthetic({ id: 1040925140, name, description: null, current_price: "5.99", price_text: "ea member price" }));
+    expect(offer.packageCount).toBeNull();
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/several package sizes.*"1 lb".*"3 ct".*package count unknown/);
+  });
+
+  it("B1: several distinct counts give packageCount null with an issue", () => {
+    const offer = normalize(synthetic({ name: "Organic Lemons", description: "4 ct or 6 ct", price_text: "ea", current_price: "3.99" }));
+    expect(offer.packageCount).toBeNull();
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/several package sizes.*"4 ct".*"6 ct".*package count unknown/);
+  });
+
+  it("B1: one count, even repeated, is still the package count", () => {
+    expect(normalize(synthetic({ name: "Organic Lemons", description: "6 ct", price_text: "lb" })).packageCount).toBe(6);
+    const repeated = normalize(synthetic({ name: "Organic Lemons 6 ct", description: "6 ct", price_text: "lb" }));
+    expect(repeated.packageCount).toBe(6);
+    expect(repeated.normalizationIssue).toBeNull();
+  });
+
+  it("B2: $14.975 is still rejected as a package total", () => {
+    const offer = normalize(synthetic({ name: "Fresh 80% Lean Ground Beef", description: "3 lb Package for $14.975", price_text: "lb", current_price: "4.99" }));
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it("B2: a sentence-final period after a consistent total is accepted", () => {
+    const offer = normalize(synthetic({ name: "Fresh 80% Lean Ground Beef", description: "3 lb Package for $8.97.", price_text: "lb", current_price: "2.99" }));
+    expect(offer.unitPrice).toEqual({ basis: "lb", cents: { n: "299", d: "1" } });
+    expect(offer.packageMassLb).toEqual({ n: "3", d: "1" });
+    expect(offer.packageTotalCents).toBe(897);
+    expect(offer.normalizationIssue).toBeNull();
+    expect(offer.conditions.complete).toBe(true);
+  });
+
+  it("B2: a sentence-final period after a contradicting total is still a contradiction", () => {
+    const offer = normalize(synthetic({ name: "Fresh 80% Lean Ground Beef", description: "3 lb Package for $5.00.", price_text: "lb", current_price: "2.99" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/package total 5\.00 for 3 lb contradicts/);
+    expect(offer.conditions.complete).toBe(false);
+  });
+});

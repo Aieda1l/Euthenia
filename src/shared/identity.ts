@@ -257,9 +257,11 @@ const PREPARATION = /\b(?:thin(?:ly)? (?:cut|sliced)|thick (?:cut|sliced)|sliced
  * matched, they name a different or smaller product than the matched cut
  * ("chuck eye roast", "breast strips", "bottom round steak"), so the cut
  * becomes unknown. A phrase that names such a cut ("top sirloin steak", "eye
- * of round roast") consumes these words first and stays a known cut.
+ * of round roast") consumes these words first and stays a known cut. B4:
+ * brisket point and deckle are sub-cuts of a brisket, and tomahawk and cowboy
+ * name long- or frenched-bone rib steaks, never a plain ribeye.
  */
-const CUT_RESIDUE = /\b(?:chuck|sirloin|round|rump|heel|eye|cross|arm|blade|bottom|top|tips?|tri|petite|flats?|flap|cap|center|ends?|inside|outside|thin|thick|frenched|strips?|slices?|cubes?|chunks?|pieces?|portions?|bites?|fillets?|filets?|medallions?|shaved|tenders?|halves|halved|half|split|sections?|drums?|backs?|necks?|cut up)\b/;
+const CUT_RESIDUE = /\b(?:chuck|sirloin|round|rump|heel|eye|cross|arm|blade|bottom|top|tips?|tri|petite|flats?|flap|cap|center|ends?|inside|outside|thin|thick|frenched|strips?|slices?|cubes?|chunks?|pieces?|portions?|bites?|fillets?|filets?|medallions?|shaved|tenders?|halves|halved|half|split|sections?|drums?|backs?|necks?|cut up|point|deckle|tomahawk|cowboy)\b/;
 
 /**
  * Cut vocabulary, most specific first. Specific cuts identify meat even
@@ -336,7 +338,7 @@ const CUT_PHRASES: ReadonlyArray<readonly [string, string, boolean]> = [
   ["party wings?", "party wing", true],
   ["whole (?:fryers?|chickens?|turkeys?|birds?)|fryers?", "whole", true],
   ["drumsticks?", "drumstick", true],
-  ["drumettes?", "drumette", true],
+  ["drumm?ettes?", "drumette", true],
   ["thighs?", "thigh", true],
   ["breasts?", "breast", false],
   ["wings?", "wing", false],

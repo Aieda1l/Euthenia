@@ -10,6 +10,7 @@ import {
   parseFlippFlyer,
   parseFlippItem,
   parseFlippListing,
+  type FlippAttempt,
 } from "../../src/source/flipp.js";
 import { item } from "../fixtures/source.js";
 
@@ -282,16 +283,222 @@ describe("retries", () => {
     expect((error as FlippDeferredError).nextPermittedAt).toBe("2026-09-24T20:02:00.000Z");
   });
 
-  it("does not retry 404", async () => {
-    const fetcher = sequence(() => statusResponse(404), () => jsonResponse("{}"));
-    await expect(fetchFlippJson(ITEM_URL, fetcher)).rejects.toThrow(/404/);
+  it.each([404, 410, 401, 403])("does not retry %i and reports the numeric status", async (status) => {
+    const fetcher = sequence(() => statusResponse(status), () => jsonResponse("{}"));
+    const error = await fetchFlippJson(ITEM_URL, fetcher).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FlippSourceError);
+    expect((error as FlippSourceError).message).toMatch(String(status));
+    expect((error as FlippSourceError).status).toBe(status);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the last status after exhausting retries", async () => {
+    const fetcher = sequence(() => statusResponse(502), () => statusResponse(502), () => statusResponse(502));
+    const promise = fetchFlippJson(ITEM_URL, fetcher);
+    const caught = promise.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(((await caught) as FlippSourceError).status).toBe(502);
   });
 
   it("does not retry a network failure", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => { throw new TypeError("fetch failed"); });
-    await expect(fetchFlippJson(ITEM_URL, fetcher)).rejects.toBeInstanceOf(FlippSourceError);
+    const error = await fetchFlippJson(ITEM_URL, fetcher).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FlippSourceError);
+    expect((error as FlippSourceError).status).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the network cause's code and message", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error("x"), { code: "ECONNRESET" }) });
+    });
+    const error = await fetchFlippJson(ITEM_URL, fetcher).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FlippSourceError);
+    expect((error as Error).message).toMatch(/fetch failed/);
+    expect((error as Error).message).toMatch(/ECONNRESET/);
+    expect((error as Error).message).toMatch(/\bx\b/);
+  });
+
+  it("names a TLS cause without a message", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error(""), { code: "CERT_HAS_EXPIRED" }) });
+    });
+    await expect(fetchFlippJson(ITEM_URL, fetcher)).rejects.toThrow(/CERT_HAS_EXPIRED/);
+  });
+});
+
+describe("strict Retry-After", () => {
+  it.each([
+    ["a fractional number", "1.5"],
+    ["a negative number", "-1"],
+    ["garbage", "soon"],
+    ["an ISO 8601 date", "2026-09-24T19:00:05Z"],
+    ["an obsolete RFC 850 date", "Thursday, 24-Sep-26 19:00:05 GMT"],
+    ["an IMF-fixdate with the wrong weekday", "Fri, 24 Sep 2026 19:00:05 GMT"],
+    ["an IMF-fixdate with an impossible day", "Thu, 31 Sep 2026 19:00:05 GMT"],
+  ])("falls back to the fixed 1 s backoff for %s", async (_label, value) => {
+    const fetcher = sequence(() => statusResponse(429, { "retry-after": value }), () => jsonResponse('{"ok":true}'));
+    const promise = fetchFlippJson(ITEM_URL, fetcher);
+    await flush();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(promise).resolves.toEqual({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries immediately for a past IMF-fixdate, still bounded by the retry count", async () => {
+    const past = "Thu, 24 Sep 2026 18:59:00 GMT";
+    const fetcher = sequence(
+      () => statusResponse(503, { "retry-after": past }),
+      () => statusResponse(503, { "retry-after": past }),
+      () => statusResponse(503, { "retry-after": past }),
+      () => jsonResponse("{}"),
+    );
+    const promise = fetchFlippJson(ITEM_URL, fetcher);
+    const assertion = expect(promise).rejects.toThrow(/503 after 2 retries/);
+    await flush();
+    // Node's minimum timer delay per retry, far below the fixed 1 s + 2 s backoff.
+    await vi.advanceTimersByTimeAsync(5);
+    await assertion;
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits until a future IMF-fixdate within 15 s", async () => {
+    const fetcher = sequence(() => statusResponse(503, { "retry-after": "Thu, 24 Sep 2026 19:00:03 GMT" }), () => jsonResponse('{"ok":1}'));
+    const promise = fetchFlippJson(ITEM_URL, fetcher);
+    await flush();
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(promise).resolves.toEqual({ ok: 1 });
+  });
+});
+
+describe("run-wide abort signal (A12)", () => {
+  it("sends nothing once the signal is aborted", async () => {
+    const controller = new AbortController();
+    const reason = new Error("run stopped");
+    controller.abort(reason);
+    const fetcher = sequence(() => jsonResponse("{}"));
+    await expect(fetchFlippResponse(ITEM_URL, { fetcher, signal: controller.signal })).rejects.toBe(reason);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("forwards an abort to the in-flight request and settles at once", async () => {
+    const controller = new AbortController();
+    const reason = new Error("run stopped");
+    let requestSignal: AbortSignal | undefined;
+    const fetcher = vi.fn<typeof fetch>((_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise<Response>(() => undefined); // never settles and ignores the signal
+    });
+    const promise = fetchFlippResponse(ITEM_URL, { fetcher, signal: controller.signal });
+    const caught = promise.catch((error: unknown) => error);
+    await flush();
+    controller.abort(reason);
+    expect(await caught).toBe(reason);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops during a retry backoff without sending the retry", async () => {
+    const controller = new AbortController();
+    const reason = new Error("run stopped");
+    const fetcher = sequence(() => statusResponse(503), () => jsonResponse("{}"));
+    const promise = fetchFlippResponse(ITEM_URL, { fetcher, signal: controller.signal });
+    const caught = promise.catch((error: unknown) => error);
+    await flush();
+    await vi.advanceTimersByTimeAsync(500);
+    controller.abort(reason);
+    expect(await caught).toBe(reason);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not send a redirect hop after an abort", async () => {
+    const controller = new AbortController();
+    const reason = new Error("run stopped");
+    const fetcher = sequence(
+      () => {
+        controller.abort(reason);
+        return statusResponse(302, { location: "/flipp/items/2" });
+      },
+      () => jsonResponse("{}"),
+    );
+    await expect(fetchFlippResponse(ITEM_URL, { fetcher, signal: controller.signal })).rejects.toBe(reason);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("attempt audit", () => {
+  it("reports every exchange with its attempt number, redirect hop, status and error", async () => {
+    const attempts: FlippAttempt[] = [];
+    const fetcher = sequence(
+      () => statusResponse(302, { location: "/flipp/items/2" }),
+      () => new Response("busy", { status: 503 }),
+      () => jsonResponse('{"ok":true}'),
+    );
+    const promise = fetchFlippResponse(ITEM_URL, { fetcher, onAttempt: (attempt) => attempts.push(attempt) });
+    await flush();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await promise;
+    expect(attempts.map(({ url, attempt, hop, status }) => ({ url, attempt, hop, status }))).toEqual([
+      { url: ITEM_URL.href, attempt: 1, hop: 0, status: 302 },
+      { url: "https://backflipp.wishabi.com/flipp/items/2", attempt: 1, hop: 1, status: 503 },
+      { url: ITEM_URL.href, attempt: 2, hop: 0, status: 200 },
+    ]);
+    expect(attempts.every((attempt) => attempt.requestUrl === ITEM_URL.href)).toBe(true);
+    expect(attempts[0]?.error).toBeNull();
+    expect(attempts[1]?.error).toMatch(/503/);
+    expect(new TextDecoder().decode(attempts[1]?.body ?? new Uint8Array())).toBe("busy");
+    expect(attempts[2]).toMatchObject({ error: null, body: null });
+  });
+
+  it("reports a transport failure with no status", async () => {
+    const attempts: FlippAttempt[] = [];
+    const fetcher = vi.fn<typeof fetch>(async () => { throw new TypeError("fetch failed"); });
+    await fetchFlippResponse(ITEM_URL, { fetcher, onAttempt: (attempt) => attempts.push(attempt) }).catch(() => undefined);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({ url: ITEM_URL.href, attempt: 1, hop: 0, status: null, body: null });
+    expect(attempts[0]?.error).toMatch(/fetch failed/);
+  });
+
+  it("keeps a rejected HTML body, capped at 1 MB", async () => {
+    const attempts: FlippAttempt[] = [];
+    const page = `<html>${"x".repeat(2 * 1024 * 1024)}</html>`;
+    const fetcher = sequence(() => jsonResponse(page, { contentType: "text/html" }));
+    await fetchFlippResponse(ITEM_URL, { fetcher, onAttempt: (attempt) => attempts.push(attempt) }).catch(() => undefined);
+    expect(attempts[0]?.error).toMatch(/HTML/);
+    expect(attempts[0]?.body?.byteLength).toBe(1024 * 1024);
+    expect(attempts[0]?.bodyTruncated).toBe(true);
+    expect(new TextDecoder().decode(attempts[0]?.body?.subarray(0, 6))).toBe("<html>");
+  });
+
+  it("keeps a large non-2xx body only up to 1 MB", async () => {
+    const attempts: FlippAttempt[] = [];
+    const fetcher = sequence(() => new Response("e".repeat(1024 * 1024 + 10), { status: 404 }));
+    await fetchFlippResponse(ITEM_URL, { fetcher, onAttempt: (attempt) => attempts.push(attempt) }).catch(() => undefined);
+    expect(attempts[0]).toMatchObject({ status: 404, bodyTruncated: true });
+    expect(attempts[0]?.body?.byteLength).toBe(1024 * 1024);
+  });
+
+  it("reports a deferral and a rejected redirect", async () => {
+    const attempts: FlippAttempt[] = [];
+    const deferred = sequence(() => statusResponse(429, { "retry-after": "60" }));
+    await fetchFlippResponse(ITEM_URL, { fetcher: deferred, onAttempt: (attempt) => attempts.push(attempt) }).catch(() => undefined);
+    const escaped = sequence(() => statusResponse(301, { location: "https://evil.test/" }));
+    await fetchFlippResponse(ITEM_URL, { fetcher: escaped, onAttempt: (attempt) => attempts.push(attempt) }).catch(() => undefined);
+    expect(attempts.map((attempt) => attempt.status)).toEqual([429, 301]);
+    expect(attempts[0]?.error).toMatch(/next permitted request/);
+    expect(attempts[1]?.error).toMatch(/redirect rejected/);
+  });
+});
+
+describe("no live network in unit tests", () => {
+  it("global fetch is disabled by the test setup", () => {
+    expect(() => fetch("http://127.0.0.1:9/")).toThrow(/disabled in tests/);
   });
 });
 
@@ -386,36 +593,64 @@ describe("parsers", () => {
     expect(() => parseFlippItem(value)).toThrow(FlippSourceError);
   });
 
+  const STRICT = ["QFC", "Safeway"];
+
   it("parseFlippListing validates flyers and keeps extra fields", () => {
-    const flyers = parseFlippListing({
+    const listing = parseFlippListing({
       flyers: [{ id: 8132234, merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: "b", is_store_select: true }],
       extra: 1,
-    });
-    expect(flyers).toEqual([{ id: 8132234, merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: "b", is_store_select: true }]);
+    }, STRICT);
+    expect(listing.flyers).toEqual([{ id: 8132234, merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: "b", is_store_select: true }]);
+    expect(listing.ignored).toEqual([]);
   });
 
   it.each([
     ["no flyers", {}],
     ["flyers not an array", { flyers: {} }],
-    ["a string id", { flyers: [{ id: "1", merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: "b" }] }],
-    ["a missing merchant", { flyers: [{ id: 1, name: "Weekly Ad", valid_from: "a", valid_to: "b" }] }],
-    ["a missing name", { flyers: [{ id: 1, merchant: "QFC", valid_from: "a", valid_to: "b" }] }],
-    ["a numeric valid_to", { flyers: [{ id: 1, merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: 5 }] }],
-    ["a null flyer", { flyers: [null] }],
+    ["a QFC flyer with a string id", { flyers: [{ id: "1", merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: "b" }] }],
+    ["a QFC flyer with a missing name", { flyers: [{ id: 1, merchant: "QFC", valid_from: "a", valid_to: "b" }] }],
+    ["a Safeway flyer with a numeric valid_to", { flyers: [{ id: 1, merchant: "Safeway", name: "Weekly Ad", valid_from: "a", valid_to: 5 }] }],
+    ["a padded Safeway merchant with a null name", { flyers: [{ id: 1, merchant: " Safeway ", name: null, valid_from: "a", valid_to: "b" }] }],
   ])("parseFlippListing rejects %s", (_label, value) => {
-    expect(() => parseFlippListing(value)).toThrow(FlippSourceError);
+    expect(() => parseFlippListing(value, STRICT)).toThrow(FlippSourceError);
   });
 
-  it("parseFlippFlyer validates rows and keeps extra fields", () => {
+  it("parseFlippListing ignores and notes malformed flyers from other merchants", () => {
+    const good = { id: 8132234, merchant: "QFC", name: "Weekly Ad", valid_from: "a", valid_to: "b" };
+    const otherGood = { id: 7, merchant: "Fred Meyer", name: "Weekly Ad", valid_from: "a", valid_to: "b" };
+    const listing = parseFlippListing({
+      flyers: [
+        { id: "x", merchant: "Fred Meyer", name: "Weekly Ad", valid_from: "a", valid_to: "b" },
+        { id: 3, merchant: "Albertsons", name: null, valid_from: "a", valid_to: "b" },
+        { id: 4, name: "Weekly Ad", valid_from: "a", valid_to: "b" },
+        null,
+        good,
+        otherGood,
+      ],
+    }, STRICT);
+    expect(listing.flyers).toEqual([good, otherGood]);
+    expect(listing.ignored).toHaveLength(4);
+    expect(listing.ignored[0]).toMatch(/flyers\[0\].*Fred Meyer.*id/);
+    expect(listing.ignored[1]).toMatch(/flyers\[1\].*Albertsons.*name/);
+    expect(listing.ignored[2]).toMatch(/flyers\[2\].*merchant/);
+    expect(listing.ignored[3]).toMatch(/flyers\[3\].*not an object/);
+  });
+
+  it("parseFlippFlyer validates row IDs and keeps extra fields", () => {
     expect(parseFlippFlyer({ items: [{ id: 5, name: "Organic Strawberries", price: "2.99" }], pages: [] }))
       .toEqual([{ id: 5, name: "Organic Strawberries", price: "2.99" }]);
+  });
+
+  it("parseFlippFlyer keeps a row with a valid id but no string name for the collector to exclude", () => {
+    expect(parseFlippFlyer({ items: [{ id: 1 }, { id: 2, name: 7 }] })).toEqual([{ id: 1 }, { id: 2, name: 7 }]);
   });
 
   it.each([
     ["no items", {}],
     ["items not an array", { items: null }],
-    ["a row without a name", { items: [{ id: 1 }] }],
     ["a row with a negative id", { items: [{ id: -1, name: "x" }] }],
+    ["a row with a string id", { items: [{ id: "5", name: "x" }] }],
+    ["a row without an id", { items: [{ name: "x" }] }],
     ["a non-object row", { items: ["x"] }],
   ])("parseFlippFlyer rejects %s", (_label, value) => {
     expect(() => parseFlippFlyer(value)).toThrow(FlippSourceError);

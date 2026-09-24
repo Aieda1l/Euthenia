@@ -22,7 +22,9 @@ if (!args.ok) {
     print(`${result.status}: ${result.message}`);
     if (result.nextPermittedAt !== null) print(`Next permitted request: ${result.nextPermittedAt}`);
     print(`Audit: ${result.auditDir}`);
-    if (args.reportPath !== null) print(`Report: ${resolve(args.reportPath)}`);
+    if (result.reportWritten && args.reportPath !== null) print(`Report: ${resolve(args.reportPath)}`);
+    // A failed audit or report write is shown, but the decided status and exit code stand.
+    for (const problem of result.writeErrors) console.error(`WARNING: ${problem}`);
     process.exitCode = result.exitCode;
   } catch (error) {
     console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);

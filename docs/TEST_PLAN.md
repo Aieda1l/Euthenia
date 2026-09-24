@@ -2,7 +2,23 @@
 
 ## Current executable tooling
 
-No application source or dependency manifest exists as of 2026-09-18. There are no discovered test, lint, typecheck or build scripts. Do not run or report invented npm commands. M1 planning must choose minimal tooling, then record the actual scripts from its manifest here.
+As of 2026-09-24 (Task 1A committed at 8d13bd5). These are the real scripts from `package.json`:
+
+| Command | Purpose |
+|---|---|
+| `npm ci` | Clean install from the committed lockfile (`save-exact`) |
+| `npm test` | `vitest run`: all unit tests |
+| `npm run test:source` | `vitest run tests/source`: source/normalization/proof tests |
+| `npm run typecheck` | `tsc --noEmit`: strict ES2022, NodeNext |
+| `npm run lint` | `eslint .` (flat config, typescript-eslint recommended) |
+
+Pinned toolchain: typescript 6.0.3, typescript-eslint 8.70.1, eslint 10.11.0, vitest 5.0.1 (with peer vite 8.3.1), tsx 4.23.15, @types/node 22.20.4.
+- TypeScript 7 is not used, because typescript-eslint 8.70.1 accepts only TypeScript `<6.1.0`.
+- Verified on Node 22.22.2 (Linux).
+
+Task 1B adds `npm run source:collect -- --postal-code 98105 [--validations <file>] [--report <file>]`. Its exit codes are 0 PASS, 1 BLOCKED, 2 source/usage error and 3 deferred. It will be recorded here once it is reviewed.
+
+Later tasks add UI, Electron and smoke scripts as planned. Do not report them until they exist.
 
 ## M0 research/spec verification
 

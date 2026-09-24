@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "attestations": [
+    {
+      "family": "albertsons",
+      "flyerId": 8139228,
+      "checkedAt": "2026-09-24T17:03:21Z",
+      "applicability": "verified",
+      "applicabilityEvidence": "Safeway's public weekly-ad page for store 2980 (4732 Brooklyn Ave NE, Seattle 98105) makes the Flipp flyerkit request publications/safeway?postal_code=98105&store_code=2980. That request returned exactly one publication, 8139228 'Weekly Ad - Safeway - Seattle' (flyer type safewayseattle). See docs/research/SAFEWAY_STORE_2980_PUBLICATION_2026-09-24.json and M1_SOURCE_EVIDENCE_2026-09-24.md.",
+      "calendarRule": "verified-local-date",
+      "calendarEvidence": "Printed ad PDF for 8139228 (sha256 fbfe772adba694cdd01e1c8cc2fa30e2e86bb9cd3bc8932eb711e04878650cf9), page 1 fine print: 'Items and prices in this ad are available 7 a.m. Wednesday, September 23, thru Tuesday, September 29, 2026, Midnight at your local Safeway and Albertsons stores. (UNLESS OTHERWISE NOTED)'. See docs/research/safeway-ad-terms-*-2026-09-24.jpg.",
+      "startLocalTime": "07:00"
+    }
+  ],
+  "validations": [
+    {
+      "offerId": "flipp:albertsons:1040925327",
+      "checkedAt": "2026-09-24T18:16:37Z",
+      "evidenceIds": ["flipp:item:1040925327:049a585f2404"],
+      "verifiedFields": ["identity", "rawPrice", "unitPrice", "packageMassLb", "packageCount", "packageTotalCents", "conditions", "channel", "applicability", "startsAt", "expiresAt"],
+      "applicabilityEvidence": "Flyer 8139228 is Safeway store 2980's current weekly ad (flyer attestation above).",
+      "calendarEvidence": "Printed ad page 4: Gala Apples appears with no special-day note, so the page-1 terms apply (7 a.m. Wed Sep 23 through Tue Sep 29, 2026). Flipp's per-item valid_from 2026-09-23T00:00:00-04:00 and valid_to 2026-09-29T23:59:59-04:00 match those dates."
+    }
+  ],
+  "pairs": []
+}

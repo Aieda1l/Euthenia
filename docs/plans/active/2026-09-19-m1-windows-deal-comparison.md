@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development for task execution with fresh Sol High implementers and independent reviewers. Use executing-plans only for tightly coupled integration while preserving required independent review.
 
-**Status:** User approved execution on 2026-09-19. Git/worktree setup completed. Task 1 blocked before product-code creation by the required Sol High runtime; see PROJECT_STATE.md.
+**Status:** User approved execution on 2026-09-19. Codex execution was runtime-blocked; on 2026-09-24 execution resumed in Claude Code per the addendum at the end of this plan (DEC-20260924-001). Task 1 in progress.
 **Goal:** Show accurate, source-backed produce and meat comparisons from two retailer families in a Windows list/detail app.  
 **Architecture:** A bounded Node collector produces a validated local JSON source snapshot. Pure TypeScript compares offers. Electron reads the fixed snapshot through narrow IPC and computes freshness at viewing time; React renders local assets.  
 **Tech stack:** Node/TypeScript, Vitest, React/Vite, Electron and Playwright Electron smoke tests. Installed Node 22.23.2 meets the observed candidate engine floors. Pin compatible dependencies and retain a lockfile during execution; registry availability is not a passing installation.  
@@ -404,3 +404,125 @@ Before implementation, the user reviews this written plan. AGENTS.md already cho
 - Source and UI configuration changes are sequenced; no overlapping implementation fan-out.
 - All product commands are proposed, not reported passing.
 - The user-facing outcome and remaining source risks are explicit.
+
+## Claude Code execution addendum - 2026-09-24
+
+**Why this exists.** On 2026-09-24 the user committed `CLAUDE.md` and `.claude/agents/`, moving orchestration to Claude Code (Opus 5.5 orchestrator plus project `implementer`, `spec-reviewer`, `quality-reviewer` and `verifier` subagents). See DEC-20260924-001. The `chatgpt-web/high` rule in the global constraints above applies to Codex sessions only. Every other constraint in this plan still binds.
+
+**Starting point.** The partial Task 1 in the Windows `C:` checkout (branch `codex/m1-implementation`) was never committed or pushed, and this repository cannot reach it. Task 1 therefore restarts here from this plan. That partial code is neither reused nor claimed. If it is pushed later, reconcile explicitly rather than merging blindly.
+
+**Execution host.** Linux cloud container, Node v22.22.2, npm 10.9.7, Git 2.43. Outbound HTTPS to `backflipp.wishabi.com`, the npm registry and `pccmarkets.com` returned 200 on 2026-09-24. Task 1 is platform-neutral. The Windows launch and smoke evidence for Tasks 3-4 still requires a Windows host. The PowerShell path note above applies only there.
+
+**Live facts on 2026-09-24 (research only; never hardcode).** The 98105 listing shows QFC Weekly Ad 8132234 (136 items) and Safeway Weekly Ad 8139228 (160 items), both Sep 23-29 with `-04:00` offsets. The listing also carries Big Book of Savings flyers, Fred Meyer (Kroger family) and Albertsons (Albertsons family). Item detail records include `image_url`, the full printed ad page image.
+
+### Task 1 split
+
+- **1A - offline core (implementer):** tooling, `src/shared/{contracts,money,identity,freshness}.ts`, `src/source/{normalize,proof}.ts`, `tests/fixtures/source.ts`, `tests/source/{money,identity,freshness,normalize,proof}.test.ts`.
+- **1B - acquisition (implementer, after 1A):** `src/source/flipp.ts`, `scripts/collect.ts` (with testable logic in `src/source/collect.ts` if useful), `tests/source/{flipp,collect}.test.ts`.
+- **1C - live gate (orchestrator):** live run, human validation against evidence, and a truthful `docs/research/M1_SOURCE_PROOF.md`.
+
+### Binding resolutions for points the plan leaves open
+
+R1. **Fixture.** `docs/research/FLIPP_DETAIL_PROBE_2026-09-19.json` starts with a UTF-8 BOM, and `items[]` holds the *unwrapped* item records. `item(id)` returns a record unchanged. Tests of `parseFlippItem` wrap it as `{ item }`, which is the live endpoint's shape.
+
+R2. **M1 category scope.** Two categories count:
+- **produce:** fresh whole or cut fruits and vegetables.
+- **meat:** raw beef, pork, chicken, turkey and lamb cuts, plus ground meat.
+
+These are excluded with an explicit reason, not guessed: seafood (the contract lacks a wild/farmed discriminator), cured or processed meat (bacon, ham, sausage, lunch meat, jerky, chorizo, patties or burgers), prepared foods, juice, frozen, canned or dried produce, kits and bowls, and anything the rules cannot classify. Classification uses documented vocabulary and exclusion rules over the current text. There is no per-item map.
+
+R3. **OR and multi-product items.** Each source item yields exactly one `Offer`. A required identity field whose value differs across the named alternatives is `unknown`. Examples:
+- "Broccoli or Cauliflower": kind unknown.
+- "Cosmic Crisp, Envy or Pink Lady Apples": kind apple, variety unknown.
+
+Counts and pairs use original source item IDs, so these items can never inflate coverage.
+
+R4. **Documented not-applicable and default rules.** Rules live beside `comparisonKey`, are commented, and are unit-tested:
+- **Produce `organic`:** `true` only when the text explicitly says organic (including "O Organics" and "Simple Truth Organic"). `false` only when it explicitly says conventional or non-organic. Otherwise `unknown`.
+- **Produce `variety`:** required for kinds where variety is commercially material (at least apple, pear, grape, potato, onion, pepper, mushroom). For other kinds it is `not-applicable` (for example strawberry, raspberry, blackberry, blueberry, broccoli, cauliflower, lemon, lime), per a documented kind table.
+- **Produce `form`:** `whole` when the text names the kind with no form qualifier. A documented qualifier (sliced, diced, chopped, cut, peeled, shredded, florets, spiralized, baby) sets that form. Conflicting qualifiers make it `unknown`.
+- **Meat `bone`:** "boneless" gives `out`, "bone-in" gives `in`, ground meat is `not-applicable`, anything else is `unknown`.
+- **Meat `skin`:** applies to poultry only in M1. "skinless" gives `off`, "skin-on" gives `on`, otherwise `unknown`. For beef, pork and lamb it is `not-applicable`.
+- **Meat `freshFrozen`:** `fresh` or `frozen` only from explicit "fresh", "frozen" or "previously frozen" text. Otherwise `unknown`.
+- **Meat `fatPercent`:** applies to ground meat only. "93% lean" gives fat 7, "80/20" gives fat 20, and a single 50-99% value in text that also says "lean" is the lean percentage. It is `not-applicable` for whole cuts. Missing on ground meat means `unknown`.
+- **`comparisonKey`:** returns `null` whenever any required field is `unknown`.
+
+R5. **Units** (`unitPrice`, `packageMassLb`, `packageCount`, `packageTotalCents`):
+- `/lb` or `lb` in the price text gives an `lb` basis.
+- A description of exactly "N lb Package" with no other basis gives price / N per lb.
+- Explicit `ea` or `each` gives an `each` basis.
+- `N for` with price P gives an `each` basis at P/N, keeps the offer quantity in raw price and conditions text, and sets `minimumUnits: null` unless the text states a required purchase.
+- Pint, bunch, bag, size ranges, missing basis or empty price give `unitPrice: null` with a specific `normalizationIssue`. Never assume `lb` or `each`.
+- A package total ("3 lb ... for $14.97") fills `packageMassLb` and `packageTotalCents` as well.
+
+R6. **Conditions.**
+- "With Card", "member price" and similar give `loyaltyRequired: true`. Explicit coupon text gives `couponRequired: true`. Silence gives `null`.
+- "Limit N" gives `maximumUnits: N`. It is distinct from `minimumUnits`.
+- `complete` is `true` only when every condition-bearing text segment (price text, pre-price text, disclaimer, and any condition words in the description) was recognized. Keep the original strings in `text`.
+
+R7. **Evidence and IDs.**
+- `rawSha256`: SHA-256 of the exact item-detail response body.
+- `Evidence.id` = `flipp:item:<sourceItemId>:<first 12 hex of rawSha256>`.
+- `retrievedUrl` = the request URL.
+- `sourceUrl` = the item's `cutout_image_url`, kept as originally given, falling back to `retrievedUrl`.
+- `rawValidity` = raw `valid_from`, `valid_to`, `available_to` (when present) and `timezone`.
+- `Offer.id` = `flipp:<family>:<sourceItemId>`.
+
+R8. **Calendar and applicability default to unknown.** The collector marks offers `applicability: "verified"` and `calendarRule: "verified-local-date"` only from an explicit human attestation for that exact flyer ID (see R9).
+- **`verified-local-date`:** `startsAt` is local midnight in America/Los_Angeles on the date part of `valid_from`. `expiresAt` is the next Los Angeles midnight after the date part of `valid_to` (exclusive). Use `Intl`; no timezone dependency.
+- **`unknown`:** `startsAt` and `expiresAt` are `null`, raw values stay in evidence, and there is never an `available_to` fallback.
+- **Contradictory validity** (start ≥ end): the calendar becomes unknown and the offer gets a `normalizationIssue`.
+- **Freshness:**
+  - `expired` when `expiresAt <= now`.
+  - `upcoming` when `startsAt > now`.
+  - `stale` when `now - observedAt > 24h`; exactly 24h is still `fresh`.
+  - Otherwise `fresh`. Precedence is expired > upcoming > stale > fresh.
+
+R9. **Human validation input.** `npm run source:collect -- --postal-code 98105 [--validations <file>] [--report <file>]`. The validation file holds:
+
+```ts
+{ schemaVersion: 1;
+  attestations: Array<{ family: Family; flyerId: number; checkedAt: string;
+    applicability: "verified"; applicabilityEvidence: string;
+    calendarRule: "verified-local-date"; calendarEvidence: string }>;
+  validations: Validation[];                    // bind via evidenceIds (raw-hash IDs)
+  pairs: Proof["pairs"] }                       // human-checked cross-family pairs
+```
+
+Without the file, or with no matching entries, nothing is verified and the gate reports BLOCKED. A validation counts only when all of the following hold:
+- its `offerId` exists;
+- every evidence ID exists on that offer with a matching raw hash;
+- `verifiedFields` covers every field in a documented `REQUIRED_VERIFIED_FIELDS` list;
+- both evidence strings are non-empty.
+
+Validation files a human authors for a real run are committed under `docs/research/` as evidence.
+
+R10. **`checkProof` counting.** It recomputes everything from records and never trusts a status string. A qualifying offer must meet every one of these:
+- belongs to one of `proof.families`;
+- has a valid validation;
+- applicability is verified and the calendar rule is not unknown;
+- freshness is `fresh` at `now`;
+- has a positive unit price;
+- has a non-null `comparisonKey`;
+- has complete evidence.
+
+Per family, it counts distinct `sourceItemId`s: at least 10, with at least one produce and one meat.
+
+A pair counts only when:
+- both sides qualify;
+- they come from different families;
+- they share `comparisonKey`, channel and unit basis;
+- the declared category matches both sides;
+- neither side's source item ID appears in an earlier counted pair (counted greedily in listed order, with skipped pairs reported).
+
+The gate needs at least 5 counted pairs, including at least 1 produce and 1 meat. Every exclusion gets a reason.
+
+R11. **Collector outputs and exit codes.**
+- Snapshot: write a temporary file, then atomically replace `data/snapshots/m1-source.json` only on PASS.
+- Diagnostics, raw responses and the generated report go to `data/audit/<run-id>/`, which is ignored. `--report` also writes the report to a chosen path.
+- The report lists candidate cross-family pairs (same key, channel and basis) to help the human choose `pairs`.
+- Exit codes: 0 PASS, 1 BLOCKED (snapshot preserved), 2 source or schema error, 3 deferred by Retry-After (records the next permitted time).
+- Before fetching details, filter list rows with the R2 rules, so item-detail requests go only to produce and meat candidates.
+- Select flyers only from the live listing: merchant QFC maps to `kroger`, merchant Safeway maps to `albertsons`, the flyer name contains "Weekly Ad", and its raw validity window contains the collection time. Any other count of matching flyers is a source error and is reported.
+
+R12. **Tooling.** Pin exact versions (`save-exact`), commit the lockfile, and use an ESM package with strict ES2022 TypeScript. Verify compatibility before choosing versions. For example, if `typescript-eslint` does not support TypeScript 7 (the native compiler), pin the newest TypeScript it supports. Record the chosen versions and real scripts in `docs/TEST_PLAN.md` (orchestrator).

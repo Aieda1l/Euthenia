@@ -2,14 +2,14 @@
 
 ## Current objective
 
-**Implementation stopped on a new Sol High runtime failure on 2026-09-20.** The requested C: probe passed, then Task 1 produced partial code/tests before the child failed with `stream disconnected before completion: ChatGPT web turn is missing cwd in trusted Codex environment context`. Read C:/Users/cyrus/.codex-worktrees/Euthenia-m1/docs/PROJECT_STATE.md and its docs/research/M1_EXECUTION_BLOCKER_2026-09-20.md for the exact resume point. Existing work and commits are preserved; no model substitution occurred.
+**2026-09-24: execution resumed in Claude Code** (DEC-20260924-001). The user's `CLAUDE.md` commit replaces the blocked Codex/Sol High route for this repository. The partial Task 1 in the Windows `C:` checkout was never pushed and cannot be reached, so Task 1 restarts here from the approved plan. The binding details are in the plan's [2026-09-24 addendum](plans/active/2026-09-19-m1-windows-deal-comparison.md#claude-code-execution-addendum---2026-09-24).
 
 Build Euthenia: a Windows grocery deal app for a UW Seattle student, prioritizing produce/meat, comparable competitor prices, radius/store/aggression controls, weekly digests and optional immediate email/SMS.
 
 ## Active milestone
 
 - **Milestone:** M1 - Trustworthy local deals in a Windows window.
-- **Status:** Specification and implementation plan remain approved. Task 1 is partially implemented and runtime-blocked in the user-selected C: checkout. The child is closed; no task or milestone is complete.
+- **Status:** Specification and implementation plan remain approved. Task 1 is restarting in this repository under Claude Code. No task or milestone is complete.
 - **Active plan:** [M1 implementation plan](plans/active/2026-09-19-m1-windows-deal-comparison.md).
 - **No further design or plan approval is needed.**
 
@@ -21,7 +21,7 @@ Build Euthenia: a Windows grocery deal app for a UW Seattle student, prioritizin
 - Read-only Flipp probes returned current QFC/Safeway ads and six detailed sample records. Units, membership/package/limit text are exposed. Two cutouts were visually checked.
 - Actual ten-per-chain/five-comparable-pair source gate has not passed. No runtime behavior or live delivery is claimed.
 
-## Runtime history and current blocker
+## Codex runtime history (superseded by DEC-20260924-001)
 
 Three fresh chatgpt-web/high implementation attempts returned:
 `stream disconnected before completion: ChatGPT web cwd is outside the trusted Codex workspace roots`
@@ -36,6 +36,9 @@ The requested C: minimal test subsequently passed as well, but implementation ch
 
 ## Next action
 
-After the required Sol High runtime is restored and continuation is authorized, preserve and resume the partial C: Task 1 at collector tests/stubs and remaining source failures. Its docs/PROJECT_STATE.md is the execution checkpoint. Specification and plan approvals remain valid; no replanning or fresh checkout is required. Do not stage the untracked .npm-cache directory.
+Task 1 of the M1 plan in this repository (Linux container, Node 22.22.2):
+1. **1A:** implementer builds the offline core (tooling, shared contracts/money/identity/freshness, normalize, proof, unit tests).
+2. **1B:** implementer builds the Flipp client and collector.
+3. **1C:** the orchestrator runs the live gate for 98105 and validates candidates against ad evidence.
 
-Task 1's live source-proof gate remains mandatory before comparisons/UI tasks. No paid services, external accounts or real messages have been created.
+Then fresh spec and quality reviews, commit and push. The live source-proof gate remains mandatory before Tasks 2-4. A BLOCKED result is a valid outcome and stops dependent UI work. No paid services, accounts or real messages.

@@ -62,3 +62,28 @@ _No project-specific decisions recorded yet._
 **Context:** User confirmed "I approve. Please continue." after reviewing the M1 plan and clarifying planned supermarket coverage.  
 **Decision:** Execute the four-task plan using the required Sol High implementer/reviewer/verifier roles. Initialize the empty project's Git baseline and use an isolated worktree.  
 **Consequences:** No further planning approval is required for M1; source-proof failure remains an explicit stop for dependent work. Real notification delivery and paid deployment remain outside M1.
+
+### DEC-20260924-001 - Continue M1 execution in Claude Code
+
+**Status:** Accepted.  
+**Context:** Codex `chatgpt-web/high` children repeatedly failed with trusted-cwd errors (2026-09-19 and 2026-09-20). On 2026-09-24 the user committed `CLAUDE.md` and `.claude/agents/`. That commit makes Claude Code (Opus 5.5 at `xhigh`, with project implementer, reviewer and verifier subagents) the operating contract and states that AGENTS.md's Codex model routing does not apply to it.  
+**Decision:** Continue the approved M1 plan in Claude Code. The Sol High-only child rule governs Codex sessions only. The partial, uncommitted Task 1 code in the Windows `C:` checkout is unavailable to this repository and is neither reused nor claimed; Task 1 restarts from the approved plan.  
+**Why:** The user explicitly changed the runtime, so this is not a silent model substitution. Waiting for the unreachable partial code would block all progress, and that code had failing tests and no review.  
+**Consequences:** Spec, scope and plan approvals stand. Implementation and review separation continues through fresh project subagents. Windows-only evidence for Tasks 3-4 still needs a Windows host.  
+**Revisit when:** The user asks to reconcile the `C:` partial work or to return to Codex.
+
+### DEC-20260924-002 - Task 1 identity, validation and calendar resolutions
+
+**Status:** Accepted as an orchestrator interpretation of the approved spec. The user may override it.  
+**Context:** The approved plan leaves several details open: identity defaults, OR-variant handling, how human validation enters the proof, and when applicability and calendar semantics count as verified.  
+**Decision:** Adopt resolutions R1-R12 in the M1 plan's 2026-09-24 addendum. In short:
+- Organic status and meat fresh/frozen status are known only from explicit text.
+- Produce form defaults to `whole` when no form qualifier appears. Variety, bone, skin and fat use documented not-applicable rules.
+- OR items stay one offer, with differing attributes unknown.
+- Applicability and calendar are verified only by per-flyer human attestations.
+- Validations bind to raw-hash evidence IDs.
+- Pairs count greedily, with each original item used at most once.
+
+**Why:** These are the most conservative readings that still allow any match. Reading "whole" as unknown would make every produce offer unmatchable. Organic and fresh/frozen are explicitly forbidden from being defaulted.  
+**Consequences:** Most conventional produce and unlabeled meat will stay unrated. The live gate may fail on pair count; the plan treats that as a truthful outcome. Any relaxation is a user product decision.  
+**Revisit when:** Live results show the gate cannot pass under these rules, or the user chooses different defaults.

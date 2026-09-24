@@ -87,3 +87,14 @@ _No project-specific decisions recorded yet._
 **Why:** These are the most conservative readings that still allow any match. Reading "whole" as unknown would make every produce offer unmatchable. Organic and fresh/frozen are explicitly forbidden from being defaulted.  
 **Consequences:** Most conventional produce and unlabeled meat will stay unrated. The live gate may fail on pair count; the plan treats that as a truthful outcome. Any relaxation is a user product decision.  
 **Revisit when:** Live results show the gate cannot pass under these rules, or the user chooses different defaults.
+
+### DEC-20260924-003 - Tighten Task 1 rules after independent review
+
+**Status:** Accepted, as orchestrator resolution of review findings. The user may override.  
+**Context:** The independent spec and quality reviews of Task 1A found paths where text rules could guess identity or price. Examples: qualifiers leaking across OR alternatives, processed goods keyed as fresh produce, organic and grass-fed meat sharing a key with conventional meat, leftover price qualifiers becoming exact unit prices, and fixture-shaped evidence passing the proof.  
+**Decision:** Adopt amendments A1-A10 in the M1 plan's "Review-driven amendments" section. Every amendment makes the rules stricter.
+
+USDA Choice/Select and Angus claims are not yet a discriminator. That limitation is documented. Human pair validation guards the source proof, and Task 2 must resolve it before automated ratings.  
+**Why:** A false match or price is worse than lower coverage, and the MVP accuracy constraints require unknown over guessed.  
+**Consequences:** Coverage drops further, which makes the live gate harder to pass. The user decisions flagged in `M1_SOURCE_EVIDENCE_2026-09-24.md` become more consequential.  
+**Revisit when:** The contract gains production-claim or grade attributes, or live evidence shows that an exclusion removes only genuinely comparable offers.

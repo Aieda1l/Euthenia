@@ -527,3 +527,28 @@ R11. **Collector outputs and exit codes.**
 - Select flyers only from the live listing: merchant QFC maps to `kroger`, merchant Safeway maps to `albertsons`, the flyer name contains "Weekly Ad", and its raw validity window contains the collection time. Any other count of matching flyers is a source error and is reported.
 
 R12. **Tooling.** Pin exact versions (`save-exact`), commit the lockfile, and use an ESM package with strict ES2022 TypeScript. Verify compatibility before choosing versions. For example, if `typescript-eslint` does not support TypeScript 7 (the native compiler), pin the newest TypeScript it supports. Record the chosen versions and real scripts in `docs/TEST_PLAN.md` (orchestrator).
+
+### Review-driven amendments to R2-R10 (2026-09-24, after the Task 1A spec and quality reviews)
+
+These amendments are binding and are all stricter than before (DEC-20260924-003).
+
+- **A1 - R3, per-segment qualifiers.** For OR and multi-product names, resolve organic, form, bone, skin and fresh/frozen per name segment, the same way as kind and variety. A qualifier stated in one alternative but absent from another (for example "Strawberries or Organic Strawberries") makes that field `unknown`. A qualifier found only in the description applies to all alternatives, except organic: organic from the description alone is `unknown` unless the name agrees. Negated or exclusionary wording ("excludes organic", "except organic", "not including organic") makes organic `unknown`.
+- **A2 - R2, head-noun rule for produce.** The produce kind must be the head of the name. After the last kind match, only form qualifiers, filler words or size/unit tokens may follow; anything else excludes the item as unrecognized. Processed forms (powder, minced, grated, crushed, ground as a spice, paste, puree, flakes, seasoning, dip, sauce, water, drink) exclude the item or make form `unknown`. None of them may default to `whole`.
+- **A3 - R2, meat production claims.** Meat that states organic, grass-fed or grass-finished, pasture-raised, free-range, wagyu, kobe or USDA Prime is excluded. Reason: the M1 identity contract has no discriminator for these claims (the same rationale as seafood). USDA Choice/Select and Angus remain a documented known limitation. The human pair check guards the proof, and Task 2 must resolve them before automated ratings.
+- **A4 - R2/R4, cut vocabulary.** Different products must not share a cut: roast vs steak (including tri-tip and eye of round), and loose vine-ripe tomatoes vs tomatoes on the vine. A preparation qualifier (thin-cut, "for carne asada", St. Louis style and similar) makes the cut `unknown` unless the vocabulary maps it to a distinct cut.
+- **A5 - R5, leftover price wording.** After the recognized vocabulary is removed (lb, each, "N for", loyalty and member phrases), any leftover wording or digits in `pre_price_text` or `price_text` ("2/", "Starting at", "save", "up to", "as low as", "BOGO", "buy … get", "off") set `unitPrice: null` and a specific `normalizationIssue`. So does a non-null `dollars_off` or `percent_off`.
+- **A6 - R6, conditions.** Condition indicators include purchase, spend, required, additional and any `$amount`. Unrecognized condition text makes `complete: false`.
+- **A7 - R7/R10, identity enforcement in the proof.** A qualifying Flipp offer must satisfy all of these:
+  - `evidence.id === flipp:item:<sourceItemId>:<rawSha256[0..12]>`;
+  - `offer.id === flipp:<family>:<sourceItemId>`;
+  - `retrievedUrl === https://backflipp.wishabi.com/flipp/items/<sourceItemId>`.
+
+  Evidence from any other provider is excluded in M1. Counts and used-item tracking are keyed by source item ID alone, and a pair whose two sides share a source item is rejected. Snapshot entries with the wrong shape are excluded with a reason, never thrown.
+- **A8 - R8, calendar integrity.**
+  - `verified-local-date` requires raw `valid_from` to have a `T00:00:00` time part and raw `valid_to` a `T23:59:59` time part, both with an explicit offset. Otherwise the calendar is `unknown` with an issue.
+  - `checkProof` excludes an offer whose calendar rule is not `unknown` but whose `startsAt`/`expiresAt` is missing, unparseable, or not ordered start < end.
+  - Timestamps must be ISO 8601 with Z or an explicit offset.
+  - `freshness` with an invalid `now` throws.
+  - An invalid attestation for a flyer makes that flyer's attestation `unknown`, even when a valid one is also present.
+- **A9 - R7 evidence bytes.** `flippEvidence` accepts the exact response bytes (`Uint8Array`) and hashes them. A string input is hashed as UTF-8 and exists only for tests.
+- **A10 - REQUIRED_VERIFIED_FIELDS** also includes `packageCount`.

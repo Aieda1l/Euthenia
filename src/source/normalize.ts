@@ -1,0 +1,396 @@
+import { createHash } from "node:crypto";
+import type { Conditions, Evidence, Family, Offer, Rational } from "../shared/contracts.js";
+import { verifiedLocalDateWindow } from "../shared/freshness.js";
+import { classifyText, deriveIdentity, normalizeText, type ItemCategory } from "../shared/identity.js";
+import { compareRational, divideRational, makeRational, multiplyRational, pounds, usdCents } from "../shared/money.js";
+
+// Flipp item-detail normalization (addendum R3, R5-R8). Pure: no network,
+// no clock. Unsupported data becomes an explicit normalizationIssue and a
+// null value, never a guessed unit, price, condition or date.
+
+export interface FlippContext {
+  family: Family;
+  retailer: string;
+  postalCode: "98105";
+  observedAt: string;
+  evidence: Evidence;
+  applicability: "verified" | "unknown";
+  calendarRule: Offer["calendarRule"];
+  /** Attested printed start time (HH:MM, America/Los_Angeles); required for verified-local-date. */
+  startLocalTime?: string | null;
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** Raw evidence value: strings verbatim, scalars stringified, absent as null. */
+function raw(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+function sourceItemIdOf(item: Record<string, unknown>): string {
+  const id = item.id;
+  if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) return String(id);
+  if (typeof id === "string" && /^[1-9]\d*$/.test(id)) return id;
+  throw new Error(`flipp item has no usable id: ${JSON.stringify(id)}`);
+}
+
+/**
+ * R2 list-row classifier. Works on flyer list rows (name only) and on
+ * item-detail records (name plus description), so the collector can filter
+ * before fetching details and re-check afterwards.
+ */
+export function classifyListRow(row: Record<string, unknown>): ItemCategory {
+  const name = text(row.name);
+  if (name === null) return { category: "excluded", reason: "missing or non-string name" };
+  return classifyText(name, text(row.description));
+}
+
+/** R7 evidence for one item-detail response body. */
+export function flippEvidence(input: {
+  rawBody: string;
+  item: Record<string, unknown>;
+  retrievedUrl: string;
+  observedAt: string;
+}): Evidence {
+  const sourceItemId = sourceItemIdOf(input.item);
+  const rawSha256 = createHash("sha256").update(input.rawBody, "utf8").digest("hex");
+  const rawValidity: Record<string, string | null> = {
+    valid_from: raw(input.item.valid_from),
+    valid_to: raw(input.item.valid_to),
+  };
+  if ("available_to" in input.item) rawValidity.available_to = raw(input.item.available_to);
+  rawValidity.timezone = raw(input.item.timezone);
+  const cutout = text(input.item.cutout_image_url);
+  return {
+    id: `flipp:item:${sourceItemId}:${rawSha256.slice(0, 12)}`,
+    provider: "flipp",
+    sourceItemId,
+    retrievedUrl: input.retrievedUrl,
+    sourceUrl: cutout !== null && cutout.length > 0 ? cutout : input.retrievedUrl,
+    observedAt: input.observedAt,
+    rawSha256,
+    rawValidity,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Units (R5)
+// ---------------------------------------------------------------------------
+
+interface Units {
+  unitPrice: Offer["unitPrice"];
+  packageMassLb: Rational | null;
+  packageCount: number | null;
+  packageTotalCents: number | null;
+  issues: string[];
+}
+
+const LB_BASIS = /\b(?:lbs?|pounds?)\b/;
+const EACH_BASIS = /\b(?:ea|each)\b/;
+const N_FOR = /\b(\d+) for\b/;
+const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
+const LB_PACKAGE_ONLY = /^\s*(\d+(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
+const PACKAGE_TOTAL = /(\d+(?:\.\d+)?)\s*lbs?\b[^$]*?\bfor\s*\$\s*(\d+(?:\.\d{1,2})?)(?!\d)/i;
+const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bpints?\b/, "pint"],
+  [/\bquarts?\b/, "quart"],
+  [/\bbunch(?:es)?\b/, "bunch"],
+  [/\bbags?\b/, "bag"],
+  [/\b(?:clamshells?|containers?|baskets?|box|boxes)\b/, "container"],
+];
+const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?\s*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
+const STATED_MASS = /\b\d+(?:\.\d+)?\s*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/;
+const STATED_COUNT = /\b(\d+)\s*(?:ct|count)\b/;
+
+function normalizeUnits(item: Record<string, unknown>): Units {
+  const issues: string[] = [];
+  const priceValue = item.current_price;
+  let cents: number | null = null;
+  if (typeof priceValue !== "string") {
+    issues.push(priceValue === null || priceValue === undefined
+      ? "current_price is missing; price unknown (never zero)"
+      : "current_price is not a string; price unknown");
+  } else {
+    cents = usdCents(priceValue);
+    if (cents === null) issues.push(`current_price ${JSON.stringify(priceValue)} is empty or not a plain USD amount; price unknown (never zero)`);
+  }
+
+  const name = text(item.name) ?? "";
+  const description = text(item.description) ?? "";
+  const priceText = normalizeText(`${text(item.pre_price_text) ?? ""} ${text(item.price_text) ?? ""}`);
+  const allText = normalizeText(`${name} ${description} ${priceText}`);
+
+  const lb = LB_BASIS.test(priceText);
+  const each = EACH_BASIS.test(priceText);
+  const nFor = N_FOR.exec(priceText);
+  const countMatch = STATED_COUNT.exec(normalizeText(`${name} ${description}`));
+  const packageCount = countMatch ? Number(countMatch[1]) : null;
+
+  let basis: "lb" | "each" | null = null;
+  let divisor: Rational = makeRational(1);
+  let packageMassLb: Rational | null = null;
+  let packageTotalCents: number | null = null;
+  let blocked = false;
+
+  const multiLb = MULTI_LB_FOR.exec(priceText);
+  if (multiLb) {
+    issues.push(`unsupported multi-pound price "${multiLb[0]}"`);
+  } else if (nFor && lb) {
+    issues.push(`conflicting unit basis: "${nFor[0]}" with a per-lb price`);
+  } else if (lb && each) {
+    issues.push("conflicting unit basis: both lb and each in price text");
+  } else if (nFor) {
+    const quantity = Number(nFor[1]);
+    if (quantity >= 1) {
+      basis = "each";
+      divisor = makeRational(quantity);
+    } else {
+      issues.push(`unsupported multi-buy quantity "${nFor[0]}"`);
+    }
+  } else if (lb) {
+    basis = "lb";
+  } else if (each) {
+    basis = "each";
+  } else {
+    const packageOnly = LB_PACKAGE_ONLY.exec(description);
+    if (packageOnly) {
+      const mass = pounds(packageOnly[1] ?? "", "lb");
+      if (compareRational(mass, makeRational(0)) > 0) {
+        basis = "lb";
+        divisor = mass;
+        packageMassLb = mass;
+        packageTotalCents = cents;
+      } else {
+        issues.push("package mass is zero");
+      }
+    } else {
+      issues.push("no explicit unit basis (lb or each) in price text; unit unknown");
+    }
+  }
+
+  for (const [pattern, label] of UNSUPPORTED_UNITS) {
+    if (pattern.test(allText)) {
+      issues.push(`unsupported unit or container (${label}); no lb/each conversion`);
+      blocked = true;
+    }
+  }
+  const range = SIZE_RANGE.exec(allText);
+  if (range) {
+    issues.push(`size range "${range[0]}" cannot support a precise unit price`);
+    blocked = true;
+  }
+  if (basis === "each" && STATED_MASS.test(normalizeText(`${name} ${description}`))) {
+    issues.push("each-priced item states a package mass; not converted");
+    blocked = true;
+  }
+  if (basis === "each" && packageCount !== null && packageCount > 1) {
+    issues.push(`each-priced item states a package count (${packageCount}); not converted`);
+    blocked = true;
+  }
+
+  if (basis === "lb" && packageMassLb === null) {
+    const total = PACKAGE_TOTAL.exec(description);
+    if (total) {
+      const mass = pounds(total[1] ?? "", "lb");
+      const totalCents = usdCents(total[2] ?? "");
+      if (totalCents !== null && compareRational(mass, makeRational(0)) > 0) {
+        packageMassLb = mass;
+        packageTotalCents = totalCents;
+        if (cents !== null) {
+          // Consistent when price x mass is within one cent of the stated total (rounding).
+          const expected = multiplyRational(makeRational(cents), mass);
+          const consistent = compareRational(expected, makeRational(totalCents - 1)) > 0 &&
+            compareRational(expected, makeRational(totalCents + 1)) < 0;
+          if (!consistent) {
+            issues.push(`package total ${total[2]} for ${total[1]} lb contradicts the per-lb price`);
+            blocked = true;
+          }
+        }
+      }
+    }
+  }
+
+  const unitPrice = basis !== null && cents !== null && !blocked
+    ? { basis, cents: divideRational(makeRational(cents), divisor) }
+    : null;
+  return { unitPrice, packageMassLb, packageCount, packageTotalCents, issues };
+}
+
+// ---------------------------------------------------------------------------
+// Conditions (R6)
+// ---------------------------------------------------------------------------
+
+interface ConditionState {
+  loyalty: Set<boolean>;
+  coupon: boolean;
+  minimum: Set<number>;
+  maximum: Set<number>;
+}
+
+// Recognized condition phrases. Everything else in a condition-bearing
+// segment is unrecognized and makes the conditions incomplete.
+const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray, state: ConditionState) => void]> = [
+  [/\bno (?:card|membership) (?:needed|required)\b/g, (_, s) => s.loyalty.add(false)],
+  [/\bwith (?:your |a )?(?:club ?card|rewards card|loyalty card|card)\b/g, (_, s) => s.loyalty.add(true)],
+  [/\bclub ?card(?: price)?\b|\bcard price\b/g, (_, s) => s.loyalty.add(true)],
+  [/\bmembers?(?: only)?(?: prices?| pricing| deals?| specials?)?\b/g, (_, s) => s.loyalty.add(true)],
+  [/\b(?:with )?(?:digital )?coupons?(?: required)?\b/g, (_, s) => { s.coupon = true; }],
+  [/\blimit (\d+)(?: per (?:household|customer|transaction|order|day|visit))?\b/g, (m, s) => s.maximum.add(Number(m[1]))],
+  [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b/g, (m, s) => s.minimum.add(Number(m[1]))],
+  [/\b\d+ for\b/g, () => undefined],
+  [/\bper (?:lb|pound|each)\b|\b(?:lbs?|ea|each)\b/g, () => undefined],
+  [/\bmix (?:and|&) match\b/g, () => undefined],
+];
+const CONDITION_FILLER = /\b(?:price|prices|only|and|with|sale|special)\b/g;
+const CONDITION_INDICATOR = /\b(?:limit|members?|card|coupons?|digital|clip|must|buy|get|free|bogo|save|off|min(?:imum)?|rebate|rewards?|points|mix (?:and|&) match|equal or lesser)\b/;
+
+/** Applies recognized phrases; returns the unrecognized remainder. */
+function applyConditionRules(segment: string, state: ConditionState): string {
+  let rest = segment;
+  for (const [pattern, apply] of CONDITION_RULES) {
+    pattern.lastIndex = 0;
+    rest = rest.replace(pattern, (...args: unknown[]) => {
+      const groups = args.slice(0, -2).map((part) => (typeof part === "string" ? part : undefined));
+      apply(Object.assign([...groups], { index: 0, input: segment }) as unknown as RegExpExecArray, state);
+      return " ";
+    });
+  }
+  return rest;
+}
+
+function parseConditions(item: Record<string, unknown>): Conditions {
+  const state: ConditionState = { loyalty: new Set(), coupon: false, minimum: new Set(), maximum: new Set() };
+  const kept: string[] = [];
+  let complete = true;
+
+  for (const field of ["pre_price_text", "price_text", "sale_story", "disclaimer_text"] as const) {
+    const value = text(item[field]);
+    if (value === null || value.trim() === "") continue;
+    kept.push(value);
+    const rest = applyConditionRules(normalizeText(value), state)
+      .replace(CONDITION_FILLER, " ")
+      .replace(/[^a-z0-9]+/g, "");
+    if (rest.length > 0) complete = false;
+  }
+
+  const description = text(item.description);
+  if (description !== null && CONDITION_INDICATOR.test(normalizeText(description))) {
+    kept.push(description);
+    const rest = applyConditionRules(normalizeText(description), state);
+    if (CONDITION_INDICATOR.test(rest)) complete = false;
+  }
+
+  const loyaltyRequired = state.loyalty.size === 1 ? [...state.loyalty][0] ?? null : null;
+  if (state.loyalty.size > 1) complete = false;
+  const minimumUnits = state.minimum.size === 1 ? [...state.minimum][0] ?? null : null;
+  if (state.minimum.size > 1) complete = false;
+  const maximumUnits = state.maximum.size === 1 ? [...state.maximum][0] ?? null : null;
+  if (state.maximum.size > 1) complete = false;
+
+  return {
+    complete,
+    loyaltyRequired,
+    couponRequired: state.coupon ? true : null,
+    couponIds: [],
+    minimumUnits,
+    maximumUnits,
+    text: kept,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Calendar (R8)
+// ---------------------------------------------------------------------------
+
+function dateOnly(value: unknown): string | null {
+  const match = typeof value === "string" ? /^(\d{4}-\d{2}-\d{2})/.exec(value) : null;
+  return match?.[1] ?? null;
+}
+
+function rawValidityContradicts(item: Record<string, unknown>): boolean {
+  const fromDate = dateOnly(item.valid_from);
+  const toDate = dateOnly(item.valid_to);
+  if (fromDate !== null && toDate !== null && fromDate > toDate) return true;
+  const from = typeof item.valid_from === "string" ? Date.parse(item.valid_from) : Number.NaN;
+  const to = typeof item.valid_to === "string" ? Date.parse(item.valid_to) : Number.NaN;
+  return Number.isFinite(from) && Number.isFinite(to) && from >= to;
+}
+
+function normalizeCalendar(item: Record<string, unknown>, context: FlippContext):
+  Pick<Offer, "startsAt" | "expiresAt" | "calendarRule"> & { issues: string[] } {
+  const unknownCalendar = { startsAt: null, expiresAt: null, calendarRule: "unknown" as const };
+  if (rawValidityContradicts(item)) {
+    return { ...unknownCalendar, issues: ["contradictory validity: valid_from is not before valid_to; calendar unknown"] };
+  }
+  if (context.calendarRule === "verified-local-date") {
+    const window = verifiedLocalDateWindow(item.valid_from, item.valid_to, context.startLocalTime);
+    if ("issue" in window) return { ...unknownCalendar, issues: [`${window.issue}; calendar unknown`] };
+    return { ...window, calendarRule: "verified-local-date", issues: [] };
+  }
+  if (context.calendarRule === "explicit-instant") {
+    return { ...unknownCalendar, issues: ["explicit-instant is not supported for Flipp weekly-ad dates; calendar unknown"] };
+  }
+  return { ...unknownCalendar, issues: [] };
+}
+
+// ---------------------------------------------------------------------------
+// normalizeFlipp
+// ---------------------------------------------------------------------------
+
+const RAW_PRICE_FIELDS = [
+  "current_price", "original_price", "pre_price_text", "price_text", "sale_story",
+  "description", "disclaimer_text", "dollars_off", "percent_off",
+  "current_price_range", "original_price_range",
+] as const;
+
+/**
+ * Normalizes one validated Flipp item-detail record into exactly one Offer
+ * (R3). Throws for items outside the M1 categories (call classifyListRow
+ * first) and for evidence that belongs to a different source item.
+ */
+export function normalizeFlipp(item: Record<string, unknown>, context: FlippContext): Offer {
+  const sourceItemId = sourceItemIdOf(item);
+  if (context.evidence.sourceItemId !== sourceItemId) {
+    throw new Error(`evidence sourceItemId ${context.evidence.sourceItemId} does not match item ${sourceItemId}`);
+  }
+  const classification = classifyListRow(item);
+  if (classification.category === "excluded") {
+    throw new Error(`flipp item ${sourceItemId} is excluded: ${classification.reason}`);
+  }
+  const name = text(item.name) ?? "";
+  const units = normalizeUnits(item);
+  const calendar = normalizeCalendar(item, context);
+  const issues = [...units.issues, ...calendar.issues];
+  const rawPrice: Record<string, string | null> = {};
+  for (const field of RAW_PRICE_FIELDS) rawPrice[field] = raw(item[field]);
+
+  return {
+    id: `flipp:${context.family}:${sourceItemId}`,
+    family: context.family,
+    retailer: context.retailer,
+    label: name,
+    postalCode: context.postalCode,
+    storeName: null,
+    storeAddress: null,
+    applicability: context.applicability,
+    channel: "in-store-ad",
+    identity: deriveIdentity(classification.category, name, text(item.description)),
+    rawPrice,
+    unitPrice: units.unitPrice,
+    normalizationIssue: issues.length > 0 ? issues.join("; ") : null,
+    packageMassLb: units.packageMassLb,
+    packageCount: units.packageCount,
+    packageTotalCents: units.packageTotalCents,
+    conditions: parseConditions(item),
+    evidence: [{ ...context.evidence, rawValidity: { ...context.evidence.rawValidity } }],
+    observedAt: context.observedAt,
+    startsAt: calendar.startsAt,
+    expiresAt: calendar.expiresAt,
+    calendarRule: calendar.calendarRule,
+  };
+}

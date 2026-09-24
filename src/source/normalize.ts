@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Conditions, Evidence, Family, Offer, Rational } from "../shared/contracts.js";
-import { verifiedLocalDateWindow } from "../shared/freshness.js";
-import { classifyText, deriveIdentity, normalizeText, type ItemCategory } from "../shared/identity.js";
+import { calendarDate, verifiedLocalDateWindow } from "../shared/freshness.js";
+import { classifyText, deriveIdentity, normalizeText, replaceEach, type ItemCategory, type MatchGroups } from "../shared/identity.js";
 import { compareRational, divideRational, makeRational, multiplyRational, pounds, usdCents } from "../shared/money.js";
 
 // Flipp item-detail normalization (addendum R3, R5-R8). Pure: no network,
@@ -50,15 +50,21 @@ export function classifyListRow(row: Record<string, unknown>): ItemCategory {
   return classifyText(name, text(row.description));
 }
 
-/** R7 evidence for one item-detail response body. */
+/**
+ * R7 evidence for one item-detail response body. A9: pass the exact response
+ * bytes, which are hashed as-is; a string (tests only) is hashed as UTF-8.
+ */
 export function flippEvidence(input: {
-  rawBody: string;
+  rawBody: string | Uint8Array;
   item: Record<string, unknown>;
   retrievedUrl: string;
   observedAt: string;
 }): Evidence {
   const sourceItemId = sourceItemIdOf(input.item);
-  const rawSha256 = createHash("sha256").update(input.rawBody, "utf8").digest("hex");
+  const hash = createHash("sha256");
+  if (typeof input.rawBody === "string") hash.update(input.rawBody, "utf8");
+  else hash.update(input.rawBody);
+  const rawSha256 = hash.digest("hex");
   const rawValidity: Record<string, string | null> = {
     valid_from: raw(input.item.valid_from),
     valid_to: raw(input.item.valid_to),
@@ -90,12 +96,17 @@ interface Units {
   issues: string[];
 }
 
+// Quantities are canonical numbers, (0|[1-9]\d*) with an optional fraction;
+// a leading-zero quantity ("01 lb", "02 for") is a normalization issue.
 const LB_BASIS = /\b(?:lbs?|pounds?)\b/;
 const EACH_BASIS = /\b(?:ea|each)\b/;
-const N_FOR = /\b(\d+) for\b/;
+const N_FOR = /(?<![\d.])(0|[1-9]\d*) for\b/;
+/** Largest supported "N for" multi-buy; anything above is a normalization issue. */
+const MAX_MULTI_BUY = 100;
 const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
-const LB_PACKAGE_ONLY = /^\s*(\d+(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
-const PACKAGE_TOTAL = /(\d+(?:\.\d+)?)\s*lbs?\b[^$]*?\bfor\s*\$\s*(\d+(?:\.\d{1,2})?)(?!\d)/i;
+const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
+const PACKAGE_TOTAL = /(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b[^$]*?\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d)/i;
+const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?\s*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
 const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bpints?\b/, "pint"],
   [/\bquarts?\b/, "quart"],
@@ -105,7 +116,44 @@ const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?\s*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
 const STATED_MASS = /\b\d+(?:\.\d+)?\s*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/;
-const STATED_COUNT = /\b(\d+)\s*(?:ct|count)\b/;
+const STATED_COUNT = /(?<![\d.])(0|[1-9]\d*)\s*(?:ct|count)\b/;
+
+// Loyalty phrases shared by the R6 condition rules and the A5 price vocabulary.
+const NO_LOYALTY = /\bno (?:card|membership) (?:needed|required)\b/g;
+const LOYALTY_WITH_CARD = /\bwith (?:your |a )?(?:club ?card|rewards card|loyalty card|card)\b/g;
+const LOYALTY_CARD_PRICE = /\bclub ?card(?: price)?\b|\bcard price\b/g;
+const LOYALTY_MEMBER = /\bmembers?(?: only)?(?: prices?| pricing| deals?| specials?)?\b/g;
+
+/**
+ * A5: the only wording pre_price_text and price_text may contain beside
+ * punctuation: lb/each bases, "N for", and loyalty or member phrases. Any
+ * leftover wording or digits ("2/", "Starting at", "Save", "Up to", "BOGO",
+ * "off", coupon wording) makes the unit price unknown.
+ */
+const PRICE_VOCABULARY: readonly RegExp[] = [
+  new RegExp(N_FOR.source, "g"),
+  /\bper (?:lb|pound|each|ea)\b/g,
+  /\b(?:lbs?|pounds?|ea|each)\b/g,
+  NO_LOYALTY, LOYALTY_WITH_CARD, LOYALTY_CARD_PRICE, LOYALTY_MEMBER,
+];
+
+/** A5 issues: leftover price wording and any stated discount. */
+function priceWordingIssues(item: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  for (const field of ["pre_price_text", "price_text"] as const) {
+    const value = text(item[field]);
+    if (value === null) continue;
+    let rest = normalizeText(value);
+    for (const pattern of PRICE_VOCABULARY) rest = rest.replace(pattern, " ");
+    const leftover = rest.replace(/[^a-z0-9]+/g, " ").trim();
+    if (leftover.length > 0) issues.push(`unrecognized ${field} wording ${JSON.stringify(value)} ("${leftover}"); unit price unknown`);
+  }
+  for (const field of ["dollars_off", "percent_off"] as const) {
+    const value = item[field];
+    if (value !== null && value !== undefined) issues.push(`${field} ${JSON.stringify(value)} states a discount; unit price unknown`);
+  }
+  return issues;
+}
 
 function normalizeUnits(item: Record<string, unknown>): Units {
   const issues: string[] = [];
@@ -128,14 +176,33 @@ function normalizeUnits(item: Record<string, unknown>): Units {
   const lb = LB_BASIS.test(priceText);
   const each = EACH_BASIS.test(priceText);
   const nFor = N_FOR.exec(priceText);
-  const countMatch = STATED_COUNT.exec(normalizeText(`${name} ${description}`));
-  const packageCount = countMatch ? Number(countMatch[1]) : null;
 
   let basis: "lb" | "each" | null = null;
   let divisor: Rational = makeRational(1);
   let packageMassLb: Rational | null = null;
   let packageTotalCents: number | null = null;
   let blocked = false;
+
+  const wording = priceWordingIssues(item);
+  if (wording.length > 0) {
+    issues.push(...wording);
+    blocked = true;
+  }
+  const leadingZero = LEADING_ZERO_QUANTITY.exec(allText);
+  if (leadingZero) {
+    issues.push(`leading-zero quantity "${leadingZero[0]}" is not a canonical number; unit price unknown`);
+    blocked = true;
+  }
+  const countMatch = STATED_COUNT.exec(normalizeText(`${name} ${description}`));
+  let packageCount: number | null = null;
+  if (countMatch) {
+    const count = Number(countMatch[1]);
+    if (Number.isSafeInteger(count)) packageCount = count;
+    else {
+      issues.push(`package count "${countMatch[0]}" is out of range`);
+      blocked = true;
+    }
+  }
 
   const multiLb = MULTI_LB_FOR.exec(priceText);
   if (multiLb) {
@@ -146,11 +213,11 @@ function normalizeUnits(item: Record<string, unknown>): Units {
     issues.push("conflicting unit basis: both lb and each in price text");
   } else if (nFor) {
     const quantity = Number(nFor[1]);
-    if (quantity >= 1) {
+    if (quantity >= 1 && quantity <= MAX_MULTI_BUY) {
       basis = "each";
       divisor = makeRational(quantity);
     } else {
-      issues.push(`unsupported multi-buy quantity "${nFor[0]}"`);
+      issues.push(`unsupported multi-buy quantity "${nFor[0]}" (supported: 1 to ${MAX_MULTI_BUY})`);
     }
   } else if (lb) {
     basis = "lb";
@@ -234,29 +301,30 @@ interface ConditionState {
 
 // Recognized condition phrases. Everything else in a condition-bearing
 // segment is unrecognized and makes the conditions incomplete.
-const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray, state: ConditionState) => void]> = [
-  [/\bno (?:card|membership) (?:needed|required)\b/g, (_, s) => s.loyalty.add(false)],
-  [/\bwith (?:your |a )?(?:club ?card|rewards card|loyalty card|card)\b/g, (_, s) => s.loyalty.add(true)],
-  [/\bclub ?card(?: price)?\b|\bcard price\b/g, (_, s) => s.loyalty.add(true)],
-  [/\bmembers?(?: only)?(?: prices?| pricing| deals?| specials?)?\b/g, (_, s) => s.loyalty.add(true)],
+const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (groups: MatchGroups, state: ConditionState) => void]> = [
+  [NO_LOYALTY, (_, s) => s.loyalty.add(false)],
+  [LOYALTY_WITH_CARD, (_, s) => s.loyalty.add(true)],
+  [LOYALTY_CARD_PRICE, (_, s) => s.loyalty.add(true)],
+  [LOYALTY_MEMBER, (_, s) => s.loyalty.add(true)],
   [/\b(?:with )?(?:digital )?coupons?(?: required)?\b/g, (_, s) => { s.coupon = true; }],
-  [/\blimit (\d+)(?: per (?:household|customer|transaction|order|day|visit))?\b/g, (m, s) => s.maximum.add(Number(m[1]))],
-  [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b/g, (m, s) => s.minimum.add(Number(m[1]))],
+  [/\blimit (\d+)(?: per (?:household|customer|transaction|order|day|visit))?\b/g, (g, s) => s.maximum.add(Number(g[1]))],
+  [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b/g, (g, s) => s.minimum.add(Number(g[1]))],
   [/\b\d+ for\b/g, () => undefined],
   [/\bper (?:lb|pound|each)\b|\b(?:lbs?|ea|each)\b/g, () => undefined],
   [/\bmix (?:and|&) match\b/g, () => undefined],
 ];
 const CONDITION_FILLER = /\b(?:price|prices|only|and|with|sale|special)\b/g;
-const CONDITION_INDICATOR = /\b(?:limit|members?|card|coupons?|digital|clip|must|buy|get|free|bogo|save|off|min(?:imum)?|rebate|rewards?|points|mix (?:and|&) match|equal or lesser)\b/;
+// A6: purchase, spend, required, additional and any $amount also signal conditions.
+const CONDITION_INDICATOR = /\b(?:limit|members?|card|coupons?|digital|clip|must|buy|get|free|bogo|save|off|min(?:imum)?|rebate|rewards?|points|mix (?:and|&) match|equal or lesser|purchases?|spend|required|additional)\b|\$\s*\d/;
+// R5 package totals ("3 lb ... for $14.97") are price statements, not conditions.
+const PACKAGE_TOTAL_PHRASE = new RegExp(PACKAGE_TOTAL.source, "gi");
 
 /** Applies recognized phrases; returns the unrecognized remainder. */
 function applyConditionRules(segment: string, state: ConditionState): string {
   let rest = segment;
   for (const [pattern, apply] of CONDITION_RULES) {
-    pattern.lastIndex = 0;
-    rest = rest.replace(pattern, (...args: unknown[]) => {
-      const groups = args.slice(0, -2).map((part) => (typeof part === "string" ? part : undefined));
-      apply(Object.assign([...groups], { index: 0, input: segment }) as unknown as RegExpExecArray, state);
+    rest = replaceEach(rest, pattern, (groups) => {
+      apply(groups, state);
       return " ";
     });
   }
@@ -279,10 +347,10 @@ function parseConditions(item: Record<string, unknown>): Conditions {
   }
 
   const description = text(item.description);
-  if (description !== null && CONDITION_INDICATOR.test(normalizeText(description))) {
+  const descriptionText = description === null ? "" : normalizeText(description).replace(PACKAGE_TOTAL_PHRASE, " ");
+  if (description !== null && CONDITION_INDICATOR.test(descriptionText)) {
     kept.push(description);
-    const rest = applyConditionRules(normalizeText(description), state);
-    if (CONDITION_INDICATOR.test(rest)) complete = false;
+    if (CONDITION_INDICATOR.test(applyConditionRules(descriptionText, state))) complete = false;
   }
 
   const loyaltyRequired = state.loyalty.size === 1 ? [...state.loyalty][0] ?? null : null;
@@ -307,15 +375,12 @@ function parseConditions(item: Record<string, unknown>): Conditions {
 // Calendar (R8)
 // ---------------------------------------------------------------------------
 
-function dateOnly(value: unknown): string | null {
-  const match = typeof value === "string" ? /^(\d{4}-\d{2}-\d{2})/.exec(value) : null;
-  return match?.[1] ?? null;
-}
-
 function rawValidityContradicts(item: Record<string, unknown>): boolean {
-  const fromDate = dateOnly(item.valid_from);
-  const toDate = dateOnly(item.valid_to);
-  if (fromDate !== null && toDate !== null && fromDate > toDate) return true;
+  const fromDate = calendarDate(item.valid_from);
+  const toDate = calendarDate(item.valid_to);
+  if (fromDate !== null && toDate !== null &&
+    Date.UTC(fromDate.y, fromDate.m - 1, fromDate.d) > Date.UTC(toDate.y, toDate.m - 1, toDate.d)) return true;
+  // Lenient parsing on purpose: any detectable contradiction makes the calendar unknown.
   const from = typeof item.valid_from === "string" ? Date.parse(item.valid_from) : Number.NaN;
   const to = typeof item.valid_to === "string" ? Date.parse(item.valid_to) : Number.NaN;
   return Number.isFinite(from) && Number.isFinite(to) && from >= to;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   freshness,
   isLocalTime,
+  isTimestamp,
   verifiedLocalDateWindow,
 } from "../../src/shared/freshness.js";
 
@@ -55,6 +56,46 @@ describe("freshness (R8)", () => {
     expect(freshness(row({ expiresAt: "not a date" }), NOW)).toBe("expired");
     expect(freshness(row({ startsAt: "not a date" }), NOW)).toBe("upcoming");
   });
+
+  it("A8: treats non-strict timestamps as unparseable", () => {
+    expect(freshness(row({ startsAt: "1" }), NOW)).toBe("upcoming");
+    expect(freshness(row({ expiresAt: "2026-09-30" }), NOW)).toBe("expired");
+    expect(freshness(row({ observedAt: "2026-09-24T12:00:00" }), NOW)).toBe("stale");
+  });
+
+  it("A8: throws on an invalid now", () => {
+    expect(() => freshness(row(), new Date("not a date"))).toThrow(/now/);
+    expect(() => freshness(row(), "2026-09-24T19:00:00.000Z" as unknown as Date)).toThrow(/now/);
+  });
+});
+
+describe("isTimestamp (A8: strict ISO 8601 with Z or an explicit offset)", () => {
+  it.each([
+    "2026-09-24T12:00:00.000Z",
+    "2026-09-24T12:00:00Z",
+    "2026-09-24T12:00:00-04:00",
+    "2026-09-24T12:00:00.5+05:30",
+  ])("accepts %j", (value) => {
+    expect(isTimestamp(value)).toBe(true);
+  });
+
+  it.each([
+    "1",
+    "2026",
+    "2026-09-24",
+    "2026-09-24T12:00:00",
+    "2026-09-24 12:00:00Z",
+    "2026-09-24T12:00Z",
+    "2026-02-30T00:00:00Z",
+    "2026-09-24T24:00:00Z",
+    "2026-09-24T12:00:00-0400",
+    " 2026-09-24T12:00:00Z",
+    "Thu, 24 Sep 2026 12:00:00 GMT",
+    null,
+    1_790_000_000_000,
+  ])("rejects %j", (value) => {
+    expect(isTimestamp(value)).toBe(false);
+  });
 });
 
 describe("isLocalTime (amended R8/R9)", () => {
@@ -103,6 +144,22 @@ describe("verified-local-date conversion (amended R8)", () => {
     expect(verifiedLocalDateWindow("2027-03-14T00:00:00-05:00", "2027-03-20T23:59:59-04:00", "02:30")).toMatchObject({
       issue: expect.stringMatching(/does not exist|ambiguous/),
     });
+  });
+
+  it("A8: an ambiguous fall-back start time gives an issue", () => {
+    expect(verifiedLocalDateWindow("2026-11-01T00:00:00-04:00", "2026-11-07T23:59:59-05:00", "01:30")).toMatchObject({
+      issue: expect.stringMatching(/ambiguous/),
+    });
+  });
+
+  it.each([
+    ["a non-midnight valid_from", "2026-09-23T07:00:00-04:00", "2026-09-29T23:59:59-04:00", /valid_from.*T00:00:00/],
+    ["a valid_to that is not 23:59:59", "2026-09-23T00:00:00-04:00", "2026-09-30T00:00:00-04:00", /valid_to.*T23:59:59/],
+    ["a Z offset", "2026-09-23T00:00:00Z", "2026-09-29T23:59:59Z", /valid_from.*offset/],
+    ["no offset", "2026-09-23T00:00:00", "2026-09-29T23:59:59", /valid_from.*offset/],
+    ["date-only values", "2026-09-23", "2026-09-29", /valid_from/],
+  ])("A8: %s keeps the calendar unknown", (_label, validFrom, validTo, issue) => {
+    expect(verifiedLocalDateWindow(validFrom, validTo, "00:00")).toMatchObject({ issue: expect.stringMatching(issue) });
   });
 
   it("reports contradictory validity", () => {

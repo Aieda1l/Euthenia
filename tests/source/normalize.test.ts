@@ -226,6 +226,37 @@ describe("normalizeFlipp on the committed research fixture", () => {
     ]);
   });
 
+  it("A9: hashes exact response bytes as-is and a string as UTF-8", () => {
+    const record = item(SAFEWAY_BEEF);
+    const body = JSON.stringify({ item: record });
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...Buffer.from(body, "utf8")]);
+    const input = { item: record, retrievedUrl: "https://backflipp.wishabi.com/flipp/items/1039561900", observedAt: OBSERVED_AT };
+    const fromBytes = flippEvidence({ ...input, rawBody: bytes });
+    const fromString = flippEvidence({ ...input, rawBody: body });
+    expect(fromBytes.rawSha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(fromString.rawSha256).toBe(createHash("sha256").update(body, "utf8").digest("hex"));
+    expect(fromBytes.rawSha256).not.toBe(fromString.rawSha256);
+    expect(fromBytes.id).toBe(`flipp:item:1039561900:${fromBytes.rawSha256.slice(0, 12)}`);
+  });
+
+  it("A8: verified-local-date requires T00:00:00 and T23:59:59 raw times with an explicit offset", () => {
+    const cases: Array<[string, string]> = [
+      ["2026-09-23T07:00:00-04:00", "2026-09-29T23:59:59-04:00"],
+      ["2026-09-23T00:00:00-04:00", "2026-09-30T00:00:00-04:00"],
+      ["2026-09-23T00:00:00Z", "2026-09-29T23:59:59Z"],
+      ["2026-09-23T00:00:00", "2026-09-29T23:59:59"],
+      ["2026-09-23", "2026-09-29"],
+    ];
+    for (const [validFrom, validTo] of cases) {
+      const record = { ...item(SAFEWAY_BEEF), valid_from: validFrom, valid_to: validTo };
+      const offer = normalize(record, { calendarRule: "verified-local-date", applicability: "verified", startLocalTime: "00:00" });
+      expect(offer.calendarRule).toBe("unknown");
+      expect(offer.startsAt).toBeNull();
+      expect(offer.expiresAt).toBeNull();
+      expect(offer.normalizationIssue).toMatch(/valid_(?:from|to).*T(?:00:00:00|23:59:59)/);
+    }
+  });
+
   it("falls back to retrievedUrl when there is no cutout_image_url", () => {
     const record = { ...item(SAFEWAY_BEEF), cutout_image_url: null };
     const evidence = flippEvidence({ rawBody: "{}", item: record, retrievedUrl: "https://backflipp.wishabi.com/flipp/items/1039561900", observedAt: OBSERVED_AT });
@@ -279,6 +310,24 @@ describe("unit basis (R5) on synthetic text", () => {
     expect(normalize(synthetic({ current_price: null })).unitPrice).toBeNull();
   });
 
+  it.each([
+    ["a leading-zero package", { price_text: null, description: "01 lb Package", current_price: "7.99" }],
+    ["a leading-zero package total", { name: "Fresh 80% Lean Ground Beef", price_text: "lb", description: "03 lb Twin Pack for $14.97", current_price: "4.99" }],
+    ["a huge N for", { pre_price_text: "99999999999999999999 for", price_text: null }],
+    ["N for above the cap of 100", { pre_price_text: "101 for", price_text: null }],
+    ["a leading-zero N for", { pre_price_text: "02 for", price_text: null }],
+  ])("%s becomes a normalization issue, never a throw", (_label, fields) => {
+    let offer: Offer | undefined;
+    expect(() => { offer = normalize(synthetic(fields)); }).not.toThrow();
+    expect(offer?.unitPrice).toBeNull();
+    expect(offer?.normalizationIssue).toMatch(/leading-zero|multi-buy quantity/);
+  });
+
+  it("N for up to the cap of 100 is still supported", () => {
+    expect(normalize(synthetic({ pre_price_text: "100 for", price_text: null, current_price: "5.00" })).unitPrice)
+      .toEqual({ basis: "each", cents: { n: "5", d: "1" } });
+  });
+
   it("a package total that contradicts the per-lb price is not trusted", () => {
     const offer = normalize(synthetic({ name: "Fresh Lean Ground Beef", description: "80% Sold in a 3 lb pack for $12.00", price_text: "lb", current_price: "4.99" }));
     expect(offer.unitPrice).toBeNull();
@@ -286,7 +335,57 @@ describe("unit basis (R5) on synthetic text", () => {
   });
 });
 
+describe("A5: leftover price wording and discounts on synthetic text", () => {
+  it.each([
+    ["2/ with a 1 lb package", { pre_price_text: "2/", price_text: null, description: "1 lb Package", current_price: "7.00" }, /pre_price_text.*"2\/"/],
+    ["Starting at", { pre_price_text: "Starting at", price_text: "lb" }, /pre_price_text.*Starting at/],
+    ["SAVE", { pre_price_text: "SAVE", price_text: "lb", current_price: "2.00" }, /pre_price_text.*SAVE/],
+    ["up to", { pre_price_text: "Up to", price_text: "lb" }, /Up to/],
+    ["as low as", { pre_price_text: "As low as", price_text: "ea" }, /As low as/],
+    ["BOGO", { price_text: "ea BOGO" }, /price_text.*BOGO/],
+    ["buy ... get", { price_text: "Buy 1 Get 1 ea" }, /Buy 1 Get 1/],
+    ["off", { price_text: "lb off" }, /price_text.*off/],
+    ["a dollars_off discount", { price_text: "lb", dollars_off: "1.00" }, /dollars_off/],
+    ["a percent_off discount", { price_text: "lb", percent_off: "20" }, /percent_off/],
+  ])("%s gives unitPrice null with a specific issue", (_label, fields, issue) => {
+    const offer = normalize(synthetic(fields));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(issue);
+  });
+
+  it("recognized vocabulary alone leaves the unit price intact", () => {
+    expect(normalize(synthetic({ price_text: "/lb With Card" })).unitPrice).toEqual({ basis: "lb", cents: { n: "399", d: "1" } });
+    expect(normalize(synthetic({ price_text: "lb member price" })).unitPrice).toEqual({ basis: "lb", cents: { n: "399", d: "1" } });
+    expect(normalize(synthetic({ pre_price_text: "2 for", price_text: "Club Card Price", current_price: "5.00" })).unitPrice)
+      .toEqual({ basis: "each", cents: { n: "250", d: "1" } });
+    expect(normalize(synthetic({ price_text: "per lb" })).normalizationIssue).toBeNull();
+  });
+
+  it("every committed fixture record keeps its unit result", () => {
+    const units = ALL_FIXTURE_IDS.map((id) => normalize(item(id)).unitPrice);
+    expect(units).toEqual([
+      { basis: "lb", cents: { n: "799", d: "1" } },
+      { basis: "lb", cents: { n: "177", d: "1" } },
+      null,
+      { basis: "lb", cents: { n: "249", d: "1" } },
+      { basis: "lb", cents: { n: "499", d: "1" } },
+      { basis: "each", cents: { n: "250", d: "1" } },
+    ]);
+    for (const id of [QFC_GROUND_CHUCK, QFC_APPLES, SAFEWAY_BROCCOLI, SAFEWAY_BEEF, SAFEWAY_MELONS]) {
+      expect(normalize(item(id)).normalizationIssue).toBeNull();
+    }
+  });
+});
+
 describe("conditions (R6) on synthetic text", () => {
+  it("A6: purchase, spend, required, additional and $amount are condition indicators", () => {
+    expect(normalize(synthetic({ price_text: "ea", description: "Limit 4 with $25 purchase" })).conditions)
+      .toMatchObject({ maximumUnits: 4, complete: false });
+    expect(normalize(synthetic({ price_text: "ea", description: "Limit 2, additional at regular price" })).conditions.complete).toBe(false);
+    expect(normalize(synthetic({ price_text: "ea", description: "When you spend $50" })).conditions.complete).toBe(false);
+    expect(normalize(synthetic({ price_text: "ea", description: "Purchase required" })).conditions.complete).toBe(false);
+  });
+
   it("silence gives null loyalty and coupon requirements", () => {
     const offer = normalize(synthetic({ price_text: "ea" }));
     expect(offer.conditions).toEqual({
@@ -299,6 +398,10 @@ describe("conditions (R6) on synthetic text", () => {
     const offer = normalize(synthetic({ price_text: "ea with digital coupon" }));
     expect(offer.conditions.couponRequired).toBe(true);
     expect(offer.conditions.complete).toBe(true);
+    // A5 lists only lb/each, "N for" and loyalty/member phrases as price
+    // vocabulary, so coupon wording in price_text leaves the unit price unknown.
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/price_text.*digital coupon/);
   });
 
   it("unrecognized condition text marks conditions incomplete", () => {

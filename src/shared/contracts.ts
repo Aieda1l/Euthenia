@@ -86,13 +86,15 @@ export interface Deal {
  * Offer fields a human validation must confirm against the source before an
  * offer can count toward the live gate (addendum R9). They cover the TEST_PLAN
  * "M1 acquisition gate" list: price, unit (and package terms), item,
- * location/region, channel, dates and promotion conditions.
+ * location/region, channel, dates and promotion conditions. packageCount was
+ * added by amendment A10.
  */
 export const REQUIRED_VERIFIED_FIELDS = [
   "identity",
   "rawPrice",
   "unitPrice",
   "packageMassLb",
+  "packageCount",
   "packageTotalCents",
   "conditions",
   "channel",

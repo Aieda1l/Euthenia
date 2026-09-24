@@ -34,7 +34,7 @@ const KIND_PHRASES: ReadonlyArray<readonly [string, string, string?]> = [
   ["meyer lemons?", "meyer lemon"],
   ["key limes?", "key lime"],
   ["honeydews?(?: melons?)?", "honeydew"],
-  ["cantaloupes?", "cantaloupe"],
+  ["cantaloupes?(?: melons?)?", "cantaloupe"],
   ["watermelons?", "watermelon"],
   ["pineapples?", "pineapple"],
   ["zucchinis?(?: squash(?:es)?)?", "zucchini"],
@@ -61,7 +61,7 @@ const KIND_PHRASES: ReadonlyArray<readonly [string, string, string?]> = [
   ["corn", "corn"],
   ["kale", "kale"],
   ["mangos|mangoes|mango", "mango"],
-  ["kiwifruit|kiwis?", "kiwi"],
+  ["kiwifruit|kiwi fruit|kiwis?", "kiwi"],
   ["grapefruits?", "grapefruit"],
   ["strawberries|strawberry", "strawberry"],
   ["raspberries|raspberry", "raspberry"],
@@ -127,7 +127,8 @@ export const VARIETY_REQUIRED: Readonly<Record<string, ReadonlyArray<readonly [s
     ["chanterelle", "chanterelle"],
   ],
   tomato: [
-    ["on the vine|vine ripe(?:ned)?|tov", "on the vine"], ["roma", "roma"], ["heirloom", "heirloom"],
+    // A4: loose vine-ripe tomatoes are a different product from tomatoes on the vine.
+    ["on the vine|tov", "on the vine"], ["vine ripe(?:ned)?", "vine ripe"], ["roma", "roma"], ["heirloom", "heirloom"],
     ["beefsteak", "beefsteak"], ["campari", "campari"], ["cocktail", "cocktail"],
   ],
   orange: [["cara cara", "cara cara"], ["navel", "navel"], ["valencia", "valencia"], ["blood", "blood"]],
@@ -162,9 +163,11 @@ export const VARIETY_NOT_APPLICABLE: ReadonlySet<string> = new Set([
 
 /**
  * Form qualifiers. "whole" applies when the kind is named without any
- * qualifier; two different qualifiers make form unknown.
+ * qualifier; two different qualifiers make form unknown. "Peeled baby" is one
+ * documented combination with its own form, distinct from plain "baby".
  */
 const FORM_PHRASES: ReadonlyArray<readonly [string, string]> = [
+  ["peeled baby|baby peeled", "baby-peeled"],
   ["fresh cut", "cut"],
   ["sliced|slices", "sliced"],
   ["diced|cubed|cubes", "diced"],
@@ -184,8 +187,26 @@ const FORM_PHRASES: ReadonlyArray<readonly [string, string]> = [
 
 // Organic: true only from explicit text ("organic", "O Organics", "Simple
 // Truth Organic"); false only from explicit conventional/non-organic text.
-const NOT_ORGANIC = /\b(?:non ?organic|not organic|conventional(?:ly grown)?)\b/;
+// A1: negated or exclusionary wording near "organic" ("excludes organic",
+// "except organic", "not including organic", "not organic") makes it unknown.
+const NOT_ORGANIC = /\b(?:non ?organic|conventional(?:ly grown)?)\b/;
+const NOT_ORGANIC_ALL = new RegExp(NOT_ORGANIC.source, "g");
 const ORGANIC = /\borganics?\b/;
+const ORGANIC_NEGATION = /\b(?:exclud(?:e|es|ed|ing)|except(?:ing)?|not(?: including| incl)?|no|without|other than)\b(?:[^a-z0-9]+[a-z0-9]+){0,3}?[^a-z0-9]+organics?\b/;
+
+/**
+ * A2: processed produce forms. Produce naming any of these is excluded; it
+ * never defaults to form "whole". "Ground" here is the spice ("ground
+ * ginger"); ground meat is classified as meat before this applies.
+ */
+const PROCESSED_PRODUCE = /\b(?:powder(?:ed)?|minced|grated|crushed|ground|pastes?|purees?|pureed|flakes?|seasonings?|dips?|sauces?|waters?|drinks?)\b/;
+
+/**
+ * A2 head-noun rule: size/unit tokens and whole-produce unit nouns that may
+ * follow the produce kind at the end of a name (besides form qualifiers,
+ * variety words and filler).
+ */
+const HEAD_TRAILERS = /\b(?:oz|ounces?|lbs?|pounds?|kg|g|grams?|ct|count|pk|packs?|package|pkg|bags?|bunch(?:es)?|pints?|quarts?|clamshells?|containers?|baskets?|box(?:es)?|each|ea|per|sold|by|ears?|cobs?|heads?|roots?|stalks?|bulbs?|variet(?:y|ies)|assorted|assortment|mixed)\b/g;
 
 // ---------------------------------------------------------------------------
 // Documented meat rules (R4)
@@ -194,8 +215,28 @@ const ORGANIC = /\borganics?\b/;
 export const MEAT_SPECIES: ReadonlyArray<readonly [string, string]> = [
   ["beef", "beef"], ["pork", "pork"], ["chickens?", "chicken"], ["turkeys?", "turkey"], ["lamb", "lamb"],
 ];
-/** Skin applies to poultry only; it is not-applicable for beef, pork and lamb. */
+/**
+ * Skin applies to non-ground poultry only; it is not-applicable for beef, pork
+ * and lamb, and for ground meat of any species (R4, amended 2026-09-24).
+ */
 export const POULTRY: ReadonlySet<string> = new Set(["chicken", "turkey"]);
+
+/**
+ * A3: meat production claims the M1 identity contract has no discriminator
+ * for. Such meat is excluded. USDA Choice/Select and Angus are a documented
+ * known limitation (DEC-20260924-003) and are not excluded here.
+ */
+const MEAT_PRODUCTION_CLAIM = /\b(?:organics?|grass ?(?:fed|finished)|pasture (?:raised|fed)|free range|wagyu|kobe|usda prime)\b/;
+
+/** A4: a cut phrase that cannot tell roast from steak; the cut stays unknown. */
+const AMBIGUOUS_CUT = "?";
+
+/**
+ * A4: preparation qualifiers. Unless a cut phrase maps one to a distinct cut
+ * (for example "thin cut breasts"), a leftover qualifier in the name or any
+ * qualifier in the description makes the cut unknown.
+ */
+const PREPARATION = /\b(?:thin(?:ly)? (?:cut|sliced)|thick (?:cut|sliced)|sliced|diced|cubed|butterfl(?:y|ied)|tenderized|flanken|st\.? louis|for (?:carne asada|stir fry|fajitas?|stew(?:ing)?|kabobs?|kebabs?|bulgogi|milanesa|stroganoff|philly|cheesesteaks?)|carne asada|stir fry|fajitas?|milanesa|bulgogi|korean (?:style|bbq))\b/;
 
 /**
  * Cut vocabulary, most specific first. Specific cuts identify meat even
@@ -217,10 +258,12 @@ const CUT_PHRASES: ReadonlyArray<readonly [string, string, boolean]> = [
   ["sirloin tip roasts?", "sirloin tip roast", true],
   ["sirloin steaks?", "sirloin steak", true],
   ["sirloin chops?", "sirloin chop", true],
-  ["tri tip(?: roasts?| steaks?)?", "tri-tip", true],
+  ["tri tip roasts?", "tri-tip roast", true],
+  ["tri tip steaks?", "tri-tip steak", true],
+  ["tri tips?", AMBIGUOUS_CUT, true],
   ["rib ?eye steaks?", "ribeye steak", true],
   ["rib ?eye roasts?", "ribeye roast", true],
-  ["rib ?eyes?", "ribeye", true],
+  ["rib ?eyes?", AMBIGUOUS_CUT, true],
   ["(?:standing )?rib roasts?|prime rib", "rib roast", true],
   ["(?:new york|ny) strip steaks?|(?:new york|ny) steaks?|strip loin steaks?|strip steaks?", "strip steak", true],
   ["t bone steaks?", "t-bone steak", true],
@@ -235,7 +278,9 @@ const CUT_PHRASES: ReadonlyArray<readonly [string, string, boolean]> = [
   ["top round steaks?", "top round steak", true],
   ["top round roasts?", "top round roast", true],
   ["bottom round roasts?", "bottom round roast", true],
-  ["eye of round(?: roasts?| steaks?)?", "eye of round", true],
+  ["eye of round roasts?", "eye of round roast", true],
+  ["eye of round steaks?", "eye of round steak", true],
+  ["eye of round", AMBIGUOUS_CUT, true],
   ["round steaks?", "round steak", true],
   ["rump roasts?", "rump roast", true],
   ["london broil", "london broil", true],
@@ -320,10 +365,11 @@ const FILLER = /\b(?:and|or|the|of|a|with|fresh|whole|large|small|medium|jumbo|e
 
 export function normalizeText(text: string): string {
   return text
+    // Strip these before NFKD, which would turn "Envy™" into "EnvyTM".
+    .replace(/[™℠©®]/g, " ")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[®™©]/g, " ")
     .replace(/[’'`]/g, " ")
     .replace(/(?<=[a-z])-(?=[a-z])/g, " ")
     .replace(/\s+/g, " ")
@@ -341,33 +387,42 @@ function wordRegex(pattern: string): RegExp {
   return regex;
 }
 
-function expand(template: string, match: RegExpExecArray): string {
-  return template.replace(/\$(\d)/g, (_, index: string) => match[Number(index)] ?? "");
+/** Match text and capture groups: [match, ...groups], unmatched groups undefined. */
+export type MatchGroups = ReadonlyArray<string | undefined>;
+
+/** Replaces every match of a global regex with what `replace` returns for its groups. */
+export function replaceEach(text: string, regex: RegExp, replace: (groups: MatchGroups) => string): string {
+  regex.lastIndex = 0;
+  return text.replace(regex, (...args: unknown[]) =>
+    replace(args.slice(0, -2).map((part) => (typeof part === "string" ? part : undefined))));
+}
+
+function expand(template: string, groups: MatchGroups): string {
+  return template.replace(/\$(\d)/g, (_, index: string) => groups[Number(index)] ?? "");
 }
 
 /** Finds phrases in table order, blanking each match so shorter phrases cannot re-match it. */
-function take<T>(text: string, table: ReadonlyArray<readonly [string, T]>, value: (entry: T, match: RegExpExecArray) => string):
+function take<T>(text: string, table: ReadonlyArray<readonly [string, T]>, value: (entry: T, groups: MatchGroups) => string):
   { values: string[]; rest: string } {
   const values: string[] = [];
   let rest = text;
   for (const [pattern, entry] of table) {
-    const regex = wordRegex(pattern);
-    rest = rest.replace(regex, (...args: unknown[]) => {
-      const matched = args[0] as string;
-      const groups = args.slice(0, -2).map((part) => (typeof part === "string" ? part : undefined));
-      const exec = Object.assign([...groups], { index: 0, input: rest }) as unknown as RegExpExecArray;
-      values.push(value(entry, exec));
-      return " ".repeat(matched.length);
+    rest = replaceEach(rest, wordRegex(pattern), (groups) => {
+      values.push(value(entry, groups));
+      return " ".repeat((groups[0] ?? "").length);
     });
   }
   return { values, rest };
 }
 
+const KIND_TABLE = KIND_PHRASES.map(([pattern, kind, variety]) => [pattern, { kind, variety }] as const);
+const CUT_TABLE = CUT_PHRASES.map(([pattern, cut, specific]) => [pattern, { cut, specific }] as const);
+const ALL_VARIETIES: ReadonlyArray<readonly [string, string]> = Object.values(VARIETY_REQUIRED).flat();
+
 function kindsIn(text: string): { kinds: string[]; implied: Array<[string, string]>; rest: string } {
   const implied: Array<[string, string]> = [];
-  const table = KIND_PHRASES.map(([pattern, kind, variety]) => [pattern, { kind, variety }] as const);
-  const { values, rest } = take(text, table, ({ kind, variety }, match) => {
-    if (variety) implied.push([kind, expand(variety, match)]);
+  const { values, rest } = take(text, KIND_TABLE, ({ kind, variety }, groups) => {
+    if (variety) implied.push([kind, expand(variety, groups)]);
     return kind;
   });
   return { kinds: values, implied, rest };
@@ -379,33 +434,59 @@ function varietiesIn(text: string, kind: string): string[] {
   return [...implied.filter(([k]) => k === kind).map(([, v]) => v), ...found];
 }
 
-function allVarietyTables(): ReadonlyArray<readonly [string, string]> {
-  return Object.values(VARIETY_REQUIRED).flat();
-}
-
 function speciesIn(text: string): string[] {
   return take(text, MEAT_SPECIES, (species) => species).values;
 }
 
-function cutsIn(text: string): { cuts: string[]; specific: boolean } {
+function cutsIn(text: string): { cuts: string[]; specific: boolean; rest: string } {
   let specific = false;
-  const table = CUT_PHRASES.map(([pattern, cut, isSpecific]) => [pattern, { cut, isSpecific }] as const);
-  const cuts = take(text, table, ({ cut, isSpecific }) => {
+  const { values, rest } = take(text, CUT_TABLE, ({ cut, specific: isSpecific }) => {
     specific ||= isSpecific;
     return cut;
-  }).values;
-  return { cuts, specific };
+  });
+  return { cuts: values, specific, rest };
 }
 
-/** True when a segment holds only recognized vocabulary (a modifier of a head named elsewhere). */
-function isPure(segment: string): boolean {
+/** Cuts named in one segment; a leftover preparation qualifier makes it ambiguous (A4). */
+function segmentCuts(segment: string): string[] {
+  const { cuts, rest } = cutsIn(segment);
+  return PREPARATION.test(rest) ? [...cuts, AMBIGUOUS_CUT] : cuts;
+}
+
+/**
+ * True when a segment holds only recognized vocabulary (a modifier of a head
+ * named elsewhere). Variety words count only for `kind`, the kind the other
+ * alternatives resolve to, so "Tuscan or Cantaloupe Melons" is not a
+ * cantaloupe just because "tuscan" is a kale variety.
+ */
+function isPure(segment: string, kind: string | null): boolean {
   let rest = kindsIn(segment).rest;
-  rest = take(rest, allVarietyTables(), () => "").rest;
+  if (kind !== null) rest = take(rest, VARIETY_REQUIRED[kind] ?? [], () => "").rest;
   rest = take(rest, FORM_PHRASES, () => "").rest;
   rest = take(rest, MEAT_SPECIES, () => "").rest;
-  rest = take(rest, CUT_PHRASES.map(([pattern]) => [pattern, ""] as const), () => "").rest;
+  rest = cutsIn(rest).rest;
   rest = rest.replace(FILLER, " ");
   return !/[a-z]/.test(rest);
+}
+
+/**
+ * A2 head-noun rule for one name segment: after the last produce kind, only
+ * form qualifiers, variety words, filler and size/unit tokens may follow.
+ * Returns the offending trailing words, or null.
+ */
+function trailingAfterKind(segment: string): string | null {
+  const { rest } = kindsIn(segment);
+  // take() blanks each kind match with spaces, so positions line up.
+  let end = -1;
+  for (let i = segment.length - 1; i >= 0 && end < 0; i -= 1) {
+    if (segment[i] !== rest[i]) end = i + 1;
+  }
+  if (end < 0) return null;
+  let tail = take(segment.slice(end), ALL_VARIETIES, () => "").rest;
+  tail = take(tail, FORM_PHRASES, () => "").rest;
+  tail = tail.replace(FILLER, " ").replace(HEAD_TRAILERS, " ");
+  const leftover = tail.replace(/[^a-z]+/g, " ").trim();
+  return leftover.length > 0 ? leftover : null;
 }
 
 function segmentsOf(name: string): string[] {
@@ -426,18 +507,49 @@ function single<T>(values: Iterable<T>): Known<T> {
 /**
  * R3: resolves a required field across named alternatives. With one segment
  * the distinct values must agree. With several, every segment must name a
- * value (or, when `allowModifiers`, consist only of recognized modifiers) and
- * all named values must agree; otherwise the field is unknown.
+ * value (or satisfy `isModifier`, when given) and all named values must
+ * agree; otherwise the field is unknown.
  */
-function acrossSegments(segments: string[], extract: (segment: string) => string[], allowModifiers: boolean): Known<string> {
+function acrossSegments(segments: string[], extract: (segment: string) => string[],
+  isModifier: ((segment: string) => boolean) | null): Known<string> {
   if (segments.length === 1) return single(extract(segments[0] ?? ""));
   const all: string[] = [];
   for (const segment of segments) {
     const values = extract(segment);
-    if (values.length === 0 && !(allowModifiers && isPure(segment))) return UNKNOWN;
+    if (values.length === 0 && !(isModifier?.(segment) ?? false)) return UNKNOWN;
     all.push(...values);
   }
   return single(all);
+}
+
+/**
+ * A1: resolves a qualifier (organic, form, bone, skin, fresh/frozen) per name
+ * segment. If any alternative states a value, every alternative must state
+ * the same single value; otherwise it is unknown. Description values apply
+ * to all alternatives and must agree with the name. When the name is silent,
+ * the description sets the value only if `descriptionAlone`; with nothing
+ * stated, `fallback` applies.
+ */
+function qualifier<T>(segments: string[], description: string, extract: (text: string) => T[],
+  descriptionAlone: boolean, fallback: Known<T>): Known<T> {
+  const stated: T[] = [];
+  let silent = 0;
+  for (const segment of segments) {
+    const values = new Set(extract(segment));
+    if (values.size > 1) return UNKNOWN;
+    if (values.size === 0) silent += 1;
+    else stated.push(...values);
+  }
+  const fromName = single(stated);
+  if (stated.length > 0 && (silent > 0 || fromName.state !== "known")) return UNKNOWN;
+  const described = extract(description);
+  const fromDescription = single(described);
+  if (described.length > 0 && fromDescription.state !== "known") return UNKNOWN;
+  if (fromName.state === "known") {
+    return fromDescription.state !== "known" || fromDescription.value === fromName.value ? fromName : UNKNOWN;
+  }
+  if (fromDescription.state === "known") return descriptionAlone ? fromDescription : UNKNOWN;
+  return fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,8 +560,10 @@ export function classifyText(name: string, description?: string | null): ItemCat
   const nameText = normalizeText(name);
   if (!/[a-z]/.test(nameText)) return { category: "excluded", reason: "missing or empty name" };
   const fullText = normalizeText(`${name} ${description ?? ""}`).replace(MIX_AND_MATCH, " ");
+  // "Cotton candy" before "grapes" is a grape variety, not the candy exclusion.
+  const exclusionText = fullText.replace(/\bcotton candy(?= grapes?\b)/g, " ");
   for (const [pattern, reason] of EXCLUSIONS) {
-    if (pattern.test(fullText)) return { category: "excluded", reason };
+    if (pattern.test(exclusionText)) return { category: "excluded", reason };
   }
   const produce = kindsIn(nameText).kinds.length > 0;
   // Meat needs a documented cut: a species word alone ("chicken broth") is not a raw cut.
@@ -458,9 +572,21 @@ export function classifyText(name: string, description?: string | null): ItemCat
   if (produce && meat) return { category: "excluded", reason: "names both produce and meat (mixed or prepared item)" };
   if (produce) {
     if (/\bfrozen\b/.test(fullText)) return { category: "excluded", reason: "frozen produce" };
+    const processed = PROCESSED_PRODUCE.exec(fullText);
+    if (processed) return { category: "excluded", reason: `processed produce form "${processed[0]}"` };
+    for (const segment of nameText.replace(MIX_AND_MATCH, " ").split(SEGMENT_SPLIT)) {
+      const trailing = trailingAfterKind(segment);
+      if (trailing !== null) {
+        return { category: "excluded", reason: `unrecognized item: produce kind is not the head of the name (followed by "${trailing}")` };
+      }
+    }
     return { category: "produce", reason: null };
   }
-  if (meat) return { category: "meat", reason: null };
+  if (meat) {
+    const claim = MEAT_PRODUCTION_CLAIM.exec(fullText);
+    if (claim) return { category: "excluded", reason: `production claim not in M1 identity contract ("${claim[0]}")` };
+    return { category: "meat", reason: null };
+  }
   return { category: "excluded", reason: "unrecognized item: no documented produce kind or meat species/cut" };
 }
 
@@ -468,45 +594,43 @@ export function classifyText(name: string, description?: string | null): ItemCat
 // Identity derivation (R3, R4)
 // ---------------------------------------------------------------------------
 
-function organicOf(text: string): Known<boolean> {
-  const negative = NOT_ORGANIC.test(text);
-  const positive = ORGANIC.test(text.replace(new RegExp(NOT_ORGANIC.source, "g"), " "));
-  if (positive && negative) return UNKNOWN;
-  if (positive) return known(true);
-  if (negative) return known(false);
-  return UNKNOWN;
+// Qualifier extractors: every value one text states (A1 resolves them).
+
+function organicIn(text: string): boolean[] {
+  const values: boolean[] = [];
+  if (NOT_ORGANIC.test(text)) values.push(false);
+  if (ORGANIC.test(text.replace(NOT_ORGANIC_ALL, " "))) values.push(true);
+  return values;
 }
 
-function formOf(text: string): Known<string> {
+function formsIn(text: string): string[] {
   let rest = kindsIn(text).rest;
-  rest = take(rest, allVarietyTables(), () => "").rest;
-  const forms = take(rest, FORM_PHRASES, (form) => form).values;
-  if (forms.length === 0) return known("whole");
-  return single(forms);
+  rest = take(rest, ALL_VARIETIES, () => "").rest;
+  return take(rest, FORM_PHRASES, (form) => form).values;
 }
 
-function freshFrozenOf(text: string): Known<"fresh" | "frozen"> {
+function freshFrozenIn(text: string): Array<"fresh" | "frozen"> {
   const values: Array<"fresh" | "frozen"> = [];
   let rest = text;
   rest = rest.replace(/\b(?:never|not) frozen\b/g, () => { values.push("fresh"); return " "; });
   rest = rest.replace(/\bpreviously frozen\b/g, () => { values.push("frozen"); return " "; });
   if (/\bfrozen\b/.test(rest)) values.push("frozen");
   if (/\bfresh\b/.test(rest)) values.push("fresh");
-  return single(values);
+  return values;
 }
 
-function boneOf(text: string): Known<"in" | "out"> {
+function bonesIn(text: string): Array<"in" | "out"> {
   const values: Array<"in" | "out"> = [];
   if (/\bboneless\b/.test(text)) values.push("out");
   if (/\bbone in\b/.test(text)) values.push("in");
-  return single(values);
+  return values;
 }
 
-function skinOf(text: string): Known<"on" | "off"> {
+function skinsIn(text: string): Array<"on" | "off"> {
   const values: Array<"on" | "off"> = [];
   if (/\bskinless\b/.test(text)) values.push("off");
   if (/\bskin on\b/.test(text)) values.push("on");
-  return single(values);
+  return values;
 }
 
 /**
@@ -544,30 +668,43 @@ function isGroundCut(cut: string): boolean {
 /**
  * Derives the identity of an item already classified as produce or meat.
  * Kind/species/cut/variety come from the name (with R3 alternatives);
- * qualifiers come from the name plus description.
+ * qualifiers are resolved per alternative, with the description applying to
+ * all of them (A1).
  */
 export function deriveIdentity(category: "produce" | "meat", name: string, description?: string | null): Identity {
   const segments = segmentsOf(name);
+  const descriptionText = normalizeText(description ?? "").replace(MIX_AND_MATCH, " ");
   const fullText = normalizeText(`${name} ${description ?? ""}`).replace(MIX_AND_MATCH, " ");
   const assorted = ASSORTMENT.test(fullText) || /\bmix (?:and|&) match\b/.test(normalizeText(`${name} ${description ?? ""}`));
 
   if (category === "produce") {
-    const kind = acrossSegments(segments, (segment) => kindsIn(segment).kinds, true);
+    const named = single(segments.flatMap((segment) => kindsIn(segment).kinds));
+    const headKind = named.state === "known" ? named.value : null;
+    const kind = acrossSegments(segments, (segment) => kindsIn(segment).kinds, (segment) => isPure(segment, headKind));
     let variety: Known<string> = UNKNOWN;
     if (kind.state === "known") {
       if (VARIETY_NOT_APPLICABLE.has(kind.value)) variety = NOT_APPLICABLE;
-      else if (!assorted) variety = acrossSegments(segments, (segment) => varietiesIn(segment, kind.value), false);
+      else if (!assorted) variety = acrossSegments(segments, (segment) => varietiesIn(segment, kind.value), null);
     }
-    return { category, kind, variety, form: formOf(fullText), organic: organicOf(fullText) };
+    // A2: a processed form never defaults to whole.
+    const form = PROCESSED_PRODUCE.test(fullText) ? UNKNOWN : qualifier(segments, descriptionText, formsIn, true, known("whole"));
+    const organic = ORGANIC_NEGATION.test(fullText) ? UNKNOWN : qualifier(segments, descriptionText, organicIn, false, UNKNOWN);
+    return { category, kind, variety, form, organic };
   }
 
-  const species = acrossSegments(segments, speciesIn, true);
-  const cut = assorted ? UNKNOWN : acrossSegments(segments, (segment) => cutsIn(segment).cuts, true);
+  const modifier = (segment: string) => isPure(segment, null);
+  const species = acrossSegments(segments, speciesIn, modifier);
+  let cut = assorted ? UNKNOWN : acrossSegments(segments, segmentCuts, modifier);
+  if ((cut.state === "known" && cut.value === AMBIGUOUS_CUT) || PREPARATION.test(descriptionText)) cut = UNKNOWN;
   const ground = cut.state === "known" && isGroundCut(cut.value);
-  const bone = ground ? NOT_APPLICABLE : boneOf(fullText);
-  const skin = species.state !== "known" ? UNKNOWN : POULTRY.has(species.value) ? skinOf(fullText) : NOT_APPLICABLE;
+  const bone = ground ? NOT_APPLICABLE : qualifier(segments, descriptionText, bonesIn, true, UNKNOWN);
+  const poultry = species.state === "known" && POULTRY.has(species.value);
+  const skin = ground ? NOT_APPLICABLE
+    : species.state !== "known" ? UNKNOWN
+    : poultry ? qualifier(segments, descriptionText, skinsIn, true, UNKNOWN) : NOT_APPLICABLE;
+  const freshFrozen = qualifier(segments, descriptionText, freshFrozenIn, true, UNKNOWN);
   const fatPercent = cut.state !== "known" ? UNKNOWN : ground ? fatOf(fullText) : NOT_APPLICABLE;
-  return { category, species, cut, bone, skin, freshFrozen: freshFrozenOf(fullText), fatPercent };
+  return { category, species, cut, bone, skin, freshFrozen, fatPercent };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +717,11 @@ const KNOWN_SPECIES: ReadonlySet<string> = new Set(MEAT_SPECIES.map(([, species]
 
 function isKnownString(value: Known<string>): value is { state: "known"; value: string } {
   return value.state === "known" && typeof value.value === "string" && value.value.length > 0;
+}
+
+/** Known and one of the documented enum values (A7: out-of-range values never key). */
+function isKnownOneOf(value: Known<unknown>, allowed: readonly unknown[]): boolean {
+  return value.state === "known" && allowed.includes(value.value);
 }
 
 /** Lists fields that are unknown or violate the documented rules. */
@@ -600,13 +742,14 @@ export function identityGaps(identity: Identity): string[] {
   const species = identity.species;
   const speciesKnown = isKnownString(species) && KNOWN_SPECIES.has(species.value);
   if (!speciesKnown) gaps.push("species");
-  const cutKnown = isKnownString(identity.cut);
+  const cutKnown = isKnownString(identity.cut) && identity.cut.value !== AMBIGUOUS_CUT;
   if (!cutKnown) gaps.push("cut");
   const ground = cutKnown && isGroundCut((identity.cut as { value: string }).value);
-  if (!cutKnown || (ground ? identity.bone.state !== "not-applicable" : identity.bone.state !== "known")) gaps.push("bone");
-  const poultry = speciesKnown && POULTRY.has((species as { value: string }).value);
-  if (!speciesKnown || (poultry ? identity.skin.state !== "known" : identity.skin.state !== "not-applicable")) gaps.push("skin");
-  if (identity.freshFrozen.state !== "known") gaps.push("freshFrozen");
+  if (!cutKnown || (ground ? identity.bone.state !== "not-applicable" : !isKnownOneOf(identity.bone, ["in", "out"]))) gaps.push("bone");
+  // R4 (amended): known skin only for non-ground poultry; otherwise not-applicable.
+  const skinApplies = speciesKnown && !ground && POULTRY.has((species as { value: string }).value);
+  if (!speciesKnown || (skinApplies ? !isKnownOneOf(identity.skin, ["on", "off"]) : identity.skin.state !== "not-applicable")) gaps.push("skin");
+  if (!isKnownOneOf(identity.freshFrozen, ["fresh", "frozen"])) gaps.push("freshFrozen");
   const fat = identity.fatPercent;
   const fatValid = fat.state === "known" && Number.isInteger(fat.value) && fat.value >= 0 && fat.value <= 100;
   if (!cutKnown || (ground ? !fatValid : fat.state !== "not-applicable")) gaps.push("fatPercent");

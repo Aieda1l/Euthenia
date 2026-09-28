@@ -113,3 +113,15 @@ USDA Choice/Select and Angus claims are not yet a discriminator. That limitation
 **Why:** A wrong price or match is worse than a missing one, and review cycles need a convergence criterion.  
 **Consequences:** Coverage from ad text drops further. This strengthens the case for structured catalog sources (see research/M1_SOURCE_PROOF.md).  
 **Revisit when:** A structured source replaces ad-text parsing as the primary input.
+
+### DEC-20260928-001 - User chooses catalog prices to unblock the M1 source gate
+
+**Status:** Accepted, by user decision on 2026-09-28.  
+**Context:** The live source gate is BLOCKED. Weekly ads alone gave 0 cross-chain pairs, even with relaxed identity defaults (research/M1_SOURCE_PROOF.md). The options were: add catalog prices, relax the identity defaults, revise the gate, or pause.  
+**Decision:** Add regular store (catalog) prices alongside the weekly ads:
+- the official Kroger Public API for QFC, which needs the user's own free developer registration and credentials;
+- a probe of Safeway's store-scoped product search.
+
+Catalog prices are online (pickup/delivery channel) prices. The plan's channel rules, contracts and gate wording therefore need an amendment. The orchestrator drafts it, and the user approves it before implementation.  
+**Consequences:** New hosts join the network allowlist. Evidence and calendar contracts gain catalog variants. Credentials must live in environment secrets, never in the repository. The weekly-ad path stays for in-store sale offers.  
+**Revisit when:** A catalog source proves inaccessible or its terms forbid this use.

@@ -125,3 +125,17 @@ USDA Choice/Select and Angus claims are not yet a discriminator. That limitation
 Catalog prices are online (pickup/delivery channel) prices. The plan's channel rules, contracts and gate wording therefore need an amendment. The orchestrator drafts it, and the user approves it before implementation.  
 **Consequences:** New hosts join the network allowlist. Evidence and calendar contracts gain catalog variants. Credentials must live in environment secrets, never in the repository. The weekly-ad path stays for in-store sale offers.  
 **Revisit when:** A catalog source proves inaccessible or its terms forbid this use.
+
+### DEC-20260928-002 - User approves the catalog price amendment (D1-D6)
+
+**Status:** Accepted, by user answers on 2026-09-28.  
+**Decision:** The M1 plan's "Catalog price amendment" is approved with every recommended option:
+- **D1:** catalog prices from both chains use the existing `retailer-pickup` channel. Validation checks the retailer site in Pickup mode.
+- **D2:** the gate counts only `proof.channel`. Weekly-ad offers stay collected and displayed, outside the gate.
+- **D3:** `unitPrice` comes from the regular price only. Promo prices are kept raw and unrated in M1.
+- **D4:** the loose-produce PLU sets organic status, and Kroger `temperature` sets meat fresh/frozen. Explicit text wins and a conflict gives unknown. Both are confirmed on real fixtures first.
+- **D5:** validate only the gate floor (10 per chain, covering the 5 pairs' sides) within 24 h, evaluated by replay.
+- **D6:** the user runs the Safeway S0 probe on their Windows PC. If it is feasible, runtime key discovery is allowed (the key is never stored), with the terms and fragility risks accepted. If it is not, the fallback is revisited with the user.
+
+**Pending (D7):** the user registers a Kroger developer app and adds `KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET` to the environment settings (and to PowerShell session variables for PC runs). The stores are confirmed by the Location API and store attestations.  
+**Consequences:** Implementation proceeds in the amendment's task order: C0, C1 and S0 in parallel, then K1, K2 and G1; K3 when credentials exist; S1 and S2 after a feasible S0; L1 on the user's PC.

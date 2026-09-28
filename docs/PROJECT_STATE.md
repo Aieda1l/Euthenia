@@ -30,8 +30,13 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 
 ## Next action
 
-1. **Waiting on the user:** the user chose catalog prices (DEC-20260928-001). The drafted "Catalog price amendment" in the active plan needs answers to its decisions D1-D7. Kroger developer credentials (`KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET` in environment settings) are needed for K3 and L1.
-2. After the decision, amend the plan for the chosen sources (for example a Kroger API client and credentials setup, and a Safeway product-search probe) and re-run Task 1's gate. Then Tasks 2-4.
+1. Catalog price amendment approved (DEC-20260928-002). Implement Wave 1 in parallel:
+   - C0: contracts and proof;
+   - C1: allowlisted client with headers;
+   - S0: Safeway probe script for the user's PC.
+
+   Then K1, K2 and G1.
+2. **User actions pending:** Kroger developer credentials in environment settings (K3, L1); run S0 on the Windows PC once it is reviewed.
 
 Do not start Tasks 3-4 before the gate can pass. Do not weaken the gate without the user.
 

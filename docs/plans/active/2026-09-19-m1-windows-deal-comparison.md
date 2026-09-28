@@ -562,9 +562,9 @@ These amendments are binding and are all stricter than before (DEC-20260924-003)
 - **A13 - R3, description alternatives fail closed** (after the ea20708 reviews). Any alternation in the item description (or, and, &, +, a slash between words, including "mix & match") makes kind, variety, species and cut `unknown`, whatever words it names. Vocabulary-based detection missed alternatives outside the vocabulary ("or Organic Mandarins", "or Baby Peeled"). Prose such as "great for grilling or broiling" loses coverage; that is the accepted cost.
 - **A14 - R6, weights are not unit counts; more condition wording.** "Limit 10 lbs" or "when you buy 3 lbs" must not set `maximumUnits`/`minimumUnits`; the text stays unrecognized, so `complete` is false. "Club", "membership" and "for U" are condition indicators. Hyphenated sizes ("1-lb.", "16-oz.") count as stated masses. "First cut" and "second cut" are cut-part residue. Extended 2026-09-28 after the 5a4d590 reviews: "1st/2nd cut" are residue too; a limit or minimum followed by a decimal or fraction ("2.5 lbs", "2 1/2 lbs", "2½ lbs") is not a unit count; hyphenated counts ("3-Ct.") and hyphenated package totals ("3-lb. Pkg for $X") are parsed like the spaced forms.
 
-## Catalog price amendment - DRAFT pending user approval (2026-09-28)
+## Catalog price amendment - approved 2026-09-28 (DEC-20260928-002)
 
-**Status:** Draft. Nothing here is approved or implemented. Implementation starts only after the user answers D1-D7 in section 8. Basis: DEC-20260928-001, the [catalog probe](../../research/M1_CATALOG_PROBE_2026-09-28.md) and the [blocked gate](../../research/M1_SOURCE_PROOF.md). Every existing gate rule stands unless a numbered decision changes it.
+**Status:** Approved by the user on 2026-09-28: D1-D6 use the recommended options (DEC-20260928-002). D7 (Kroger credentials) is still pending on the user's side. Basis: DEC-20260928-001, the [catalog probe](../../research/M1_CATALOG_PROBE_2026-09-28.md) and the [blocked gate](../../research/M1_SOURCE_PROOF.md). Every existing gate rule stands unless a numbered decision changes it.
 
 ### 1. Scope and outcome
 

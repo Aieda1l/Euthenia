@@ -1,9 +1,11 @@
-// Flipp HTTP client and response parsers (plan Task 1 network bullets,
-// addendum R11). Only https://backflipp.wishabi.com on the default port is
-// reachable; every redirect is checked against the same policy. Responses are
-// validated before use and never cast unchecked.
+// Allowlisted HTTP client and Flipp response parsers (plan Task 1 network
+// bullets, addendum R11, catalog amendment C1). Only https on the default port
+// to backflipp.wishabi.com or api.kroger.com is reachable; every redirect is
+// checked against the same policy and must stay on the request's host.
+// Responses are validated before use and never cast unchecked.
 
 const FLIPP_HOST = "backflipp.wishabi.com";
+const ALLOWED_HOSTS: ReadonlySet<string> = new Set([FLIPP_HOST, "api.kroger.com"]);
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
 const MAX_RETRIES = 2;
@@ -41,16 +43,16 @@ export class FlippDeferredError extends Error {
 // ---------------------------------------------------------------------------
 
 /** Why a URL is outside the allowlist, or null when it is allowed. */
-function flippUrlProblem(url: URL): string | null {
+function urlProblem(url: URL): string | null {
   if (url.protocol !== "https:") return `protocol ${url.protocol} is not https`;
-  if (url.hostname !== FLIPP_HOST) return `host ${url.hostname} is not ${FLIPP_HOST}`;
+  if (!ALLOWED_HOSTS.has(url.hostname)) return `host ${url.hostname} is not one of ${[...ALLOWED_HOSTS].join(", ")}`;
   if (url.port !== "") return `port ${url.port} is not the default`;
   if (url.username !== "" || url.password !== "") return "credentials are not allowed";
   return null;
 }
 
 function assertAllowed(url: URL, what: string): void {
-  const problem = flippUrlProblem(url);
+  const problem = urlProblem(url);
   if (problem !== null) throw new FlippSourceError(`${what} rejected: ${problem}`, url.href);
 }
 
@@ -72,7 +74,7 @@ export function flippItemUrl(itemId: number): URL {
 }
 
 // ---------------------------------------------------------------------------
-// Concurrency: one limiter for every Flipp request in the process.
+// Concurrency: one limiter for every request this client sends in the process.
 // ---------------------------------------------------------------------------
 
 function createLimiter(max: number) {
@@ -132,6 +134,10 @@ interface RawReply {
 interface Exchange {
   requestUrl: URL;
   fetcher: typeof fetch;
+  /** Caller headers plus accept; sent on every request, never reported. */
+  headers: Headers;
+  /** Hides caller header values in error text from the fetcher or body stream. */
+  redact: (text: string) => string;
   signal: AbortSignal | undefined;
   onAttempt: (attempt: FlippAttempt) => void;
 }
@@ -204,10 +210,10 @@ async function send(url: URL, exchange: Exchange): Promise<RawReply> {
         method: "GET",
         redirect: "manual",
         signal: controller.signal,
-        headers: { accept: "application/json" },
+        headers: exchange.headers,
       });
     } catch (error) {
-      throw new FlippSourceError(`request failed: ${describeError(error)}`, url.href);
+      throw new FlippSourceError(`request failed: ${exchange.redact(describeError(error))}`, url.href);
     }
     const reply = {
       url,
@@ -221,7 +227,7 @@ async function send(url: URL, exchange: Exchange): Promise<RawReply> {
     try {
       return { ...reply, bytes: new Uint8Array(await response.arrayBuffer()), truncated: false };
     } catch (error) {
-      throw new FlippSourceError(`reading the response body failed: ${describeError(error)}`, url.href, response.status);
+      throw new FlippSourceError(`reading the response body failed: ${exchange.redact(describeError(error))}`, url.href, response.status);
     }
   };
   try {
@@ -254,7 +260,7 @@ function report(
   });
 }
 
-/** Follows at most three manual redirects, each checked against the allowlist. */
+/** Follows at most three manual redirects, each checked against the allowlist and the request's host. */
 async function sendFollowingRedirects(exchange: Exchange, attempt: number): Promise<{ reply: RawReply; hop: number }> {
   let current = exchange.requestUrl;
   for (let hop = 0; ; hop += 1) {
@@ -280,7 +286,11 @@ async function sendFollowingRedirects(exchange: Exchange, attempt: number): Prom
   }
 }
 
-/** The allowlisted target of redirect number `hop + 1`, or a FlippSourceError. */
+/**
+ * The target of redirect number `hop + 1`, or a FlippSourceError. It must be
+ * allowlisted and on the request's host, so caller headers such as
+ * Authorization never reach another host, even an allowlisted one.
+ */
 function redirectTarget(reply: RawReply, hop: number, start: URL): URL {
   const from = reply.url.href;
   if (reply.location === null || reply.location.trim() === "") {
@@ -293,8 +303,11 @@ function redirectTarget(reply: RawReply, hop: number, start: URL): URL {
   } catch {
     throw new FlippSourceError(`redirect Location ${JSON.stringify(reply.location)} is not a URL`, from, reply.status);
   }
-  const problem = flippUrlProblem(next);
+  const problem = urlProblem(next);
   if (problem !== null) throw new FlippSourceError(`redirect rejected: ${problem}`, next.href, reply.status);
+  if (next.hostname !== start.hostname) {
+    throw new FlippSourceError(`redirect rejected: host ${next.hostname} is not the request's host ${start.hostname}`, next.href, reply.status);
+  }
   return next;
 }
 
@@ -398,10 +411,44 @@ export interface FetchOptions {
   signal?: AbortSignal;
   /** Called once per HTTP exchange, including failed and redirected ones, for the audit. */
   onAttempt?: (attempt: FlippAttempt) => void;
+  /**
+   * Extra request headers, such as Authorization, sent on every request, retry
+   * and same-host redirect hop. Their values are never put in attempts or
+   * error messages. `accept` is always application/json.
+   */
+  headers?: Readonly<Record<string, string>>;
+}
+
+/** Caller headers plus accept; an invalid one is rejected naming only its header name. */
+function requestHeaders(extra: Readonly<Record<string, string>>, url: URL): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(extra)) {
+    try {
+      headers.set(name, value);
+    } catch {
+      // Node's own message quotes the value, which may be a credential.
+      throw new FlippSourceError(`request rejected: header ${JSON.stringify(name)} has an invalid name or value`, url.href);
+    }
+  }
+  headers.set("accept", "application/json");
+  return headers;
 }
 
 /**
- * Validated Flipp GET: allowlisted URL, manual redirects (at most three),
+ * Replaces each caller header value, and each whitespace-separated part of it
+ * (the bare token of "Bearer <token>"), with [redacted]. Longest first, so a
+ * whole value is never left half-hidden.
+ */
+function redactor(extra: Readonly<Record<string, string>>): (text: string) => string {
+  const secrets = Object.values(extra)
+    .flatMap((value) => [value, ...value.split(/\s+/)])
+    .filter((secret) => secret !== "")
+    .sort((a, b) => b.length - a.length);
+  return (text) => secrets.reduce((result, secret) => result.replaceAll(secret, "[redacted]"), text);
+}
+
+/**
+ * Validated GET: allowlisted URL, manual same-host redirects (at most three),
  * 15 s per request, at most two concurrent requests, at most two retries for
  * 429/5xx honoring a strict Retry-After (1 s then 2 s without a usable one).
  * A Retry-After above 15 s throws FlippDeferredError; an abort rejects with
@@ -409,10 +456,14 @@ export interface FetchOptions {
  */
 export async function fetchFlippResponse(url: URL, options: FetchOptions = {}): Promise<FlippResponse> {
   assertAllowed(url, "request");
+  const extra = options.headers ?? {};
+  const headers = requestHeaders(extra, url);
   options.signal?.throwIfAborted();
   const exchange: Exchange = {
     requestUrl: url,
     fetcher: options.fetcher ?? fetch,
+    headers,
+    redact: redactor(extra),
     signal: options.signal,
     onAttempt: options.onAttempt ?? (() => undefined),
   };

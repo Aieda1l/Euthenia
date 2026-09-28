@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FlippDeferredError,
@@ -19,6 +20,7 @@ import { item } from "../fixtures/source.js";
 
 const NOW = new Date("2026-09-24T19:00:00.000Z");
 const ITEM_URL = new URL("https://backflipp.wishabi.com/flipp/items/1038428171");
+const KROGER_URL = new URL("https://api.kroger.com/v1/locations/70500807");
 const JSON_TYPE = "application/json; charset=utf-8";
 
 function jsonResponse(body: string, init: { status?: number; contentType?: string } = {}): Response {
@@ -86,6 +88,14 @@ describe("host allowlist", () => {
     ["a non-default port", "https://backflipp.wishabi.com:8443/flipp/items/1"],
     ["a username", "https://user@backflipp.wishabi.com/flipp/items/1"],
     ["a username and password", "https://user:secret@backflipp.wishabi.com/flipp/items/1"],
+    ["a Kroger look-alike suffix", "https://api.kroger.com.evil.test/v1/products"],
+    ["the bare kroger.com", "https://kroger.com/v1/products"],
+    ["another kroger.com subdomain", "https://www.kroger.com/v1/products"],
+    ["a subdomain of api.kroger.com", "https://evil.api.kroger.com/v1/products"],
+    ["a trailing-dot Kroger host", "https://api.kroger.com./v1/products"],
+    ["a non-default Kroger port", "https://api.kroger.com:8443/v1/products"],
+    ["plain http to Kroger", "http://api.kroger.com/v1/products"],
+    ["credentials in a Kroger URL", "https://user:secret@api.kroger.com/v1/products"],
   ])("rejects %s before any request", async (_label, url) => {
     const fetcher = sequence(() => jsonResponse("{}"));
     await expect(fetchFlippJson(new URL(url), fetcher)).rejects.toBeInstanceOf(FlippSourceError);
@@ -95,6 +105,14 @@ describe("host allowlist", () => {
   it("accepts the explicit default port", async () => {
     const fetcher = sequence(() => jsonResponse('{"ok":true}'));
     await expect(fetchFlippJson(new URL("https://backflipp.wishabi.com:443/flipp/items/1"), fetcher)).resolves.toEqual({ ok: true });
+  });
+
+  it("accepts api.kroger.com, including its explicit default port", async () => {
+    const fetcher = sequence(() => jsonResponse('{"ok":1}'), () => jsonResponse('{"ok":2}'));
+    await expect(fetchFlippJson(KROGER_URL, fetcher)).resolves.toEqual({ ok: 1 });
+    await expect(fetchFlippJson(new URL("https://api.kroger.com:443/v1/products?filter.term=apple"), fetcher)).resolves.toEqual({ ok: 2 });
+    expect(requestedUrl(fetcher, 0)).toBe(KROGER_URL.href);
+    expect(requestedUrl(fetcher, 1)).toBe("https://api.kroger.com/v1/products?filter.term=apple");
   });
 
   it("sends GET with manual redirects and an abort signal", async () => {
@@ -129,6 +147,43 @@ describe("redirects", () => {
     const fetcher = sequence(() => statusResponse(301, { location }), () => jsonResponse("{}"));
     await expect(fetchFlippJson(ITEM_URL, fetcher)).rejects.toThrow(FlippSourceError);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a same-host redirect on api.kroger.com", async () => {
+    const fetcher = sequence(
+      () => statusResponse(302, { location: "/v1/locations/70500807?moved=1" }),
+      () => jsonResponse('{"moved":true}'),
+    );
+    const response = await fetchFlippResponse(KROGER_URL, { fetcher });
+    expect(response.json).toEqual({ moved: true });
+    expect(response.finalUrl).toBe("https://api.kroger.com/v1/locations/70500807?moved=1");
+  });
+
+  it.each([
+    ["api.kroger.com to backflipp", KROGER_URL, "https://backflipp.wishabi.com/flipp/items/1"],
+    ["backflipp to api.kroger.com", ITEM_URL, "https://api.kroger.com/v1/products"],
+    ["backflipp to a protocol-relative api.kroger.com", ITEM_URL, "//api.kroger.com/v1/products"],
+  ])("rejects a cross-host redirect from %s, although both hosts are allowlisted", async (_label, start, location) => {
+    const attempts: FlippAttempt[] = [];
+    const fetcher = sequence(() => statusResponse(302, { location }), () => jsonResponse("{}"));
+    const error = await fetchFlippResponse(start, { fetcher, onAttempt: (attempt) => attempts.push(attempt) })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FlippSourceError);
+    expect((error as Error).message).toMatch(/redirect rejected: .*not the request's host/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(attempts).toEqual([
+      expect.objectContaining({ url: start.href, hop: 0, status: 302, error: expect.stringMatching(/redirect rejected/) }),
+    ]);
+  });
+
+  it("rejects a later redirect hop that leaves the request's host", async () => {
+    const fetcher = sequence(
+      () => statusResponse(302, { location: "/v1/locations/70500807?hop=1" }),
+      () => statusResponse(302, { location: "https://backflipp.wishabi.com/flipp/items/1" }),
+      () => jsonResponse("{}"),
+    );
+    await expect(fetchFlippJson(KROGER_URL, fetcher)).rejects.toThrow(/not the request's host/);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a redirect without a Location header", async () => {
@@ -511,6 +566,107 @@ describe("attempt audit", () => {
     expect(attempts.map((attempt) => attempt.status)).toEqual([429, 301]);
     expect(attempts[0]?.error).toMatch(/next permitted request/);
     expect(attempts[1]?.error).toMatch(/redirect rejected/);
+  });
+});
+
+describe("request headers", () => {
+  const SECRET = "Bearer SECRET123";
+  const TOKEN = "SECRET123";
+  const headers = { Authorization: SECRET };
+
+  function sentHeaders(fetcher: ReturnType<typeof sequence>, call: number): Headers {
+    return new Headers(fetcher.mock.calls[call]?.[1]?.headers);
+  }
+
+  /** What the collector's audit keeps of an attempt, with the body decoded. */
+  function auditText(attempt: FlippAttempt): string {
+    return JSON.stringify({ ...attempt, body: attempt.body === null ? null : new TextDecoder().decode(attempt.body) });
+  }
+
+  function throwing(error: Error): ReturnType<typeof sequence> {
+    return vi.fn<typeof fetch>(async () => { throw error; });
+  }
+
+  it("sends caller headers on every request, retry and same-host redirect hop, with accept kept as JSON", async () => {
+    const fetcher = sequence(
+      () => statusResponse(302, { location: "/v1/locations/70500807?hop=1" }),
+      () => statusResponse(503),
+      () => jsonResponse('{"ok":true}'),
+    );
+    const promise = fetchFlippResponse(KROGER_URL, { fetcher, headers: { Authorization: SECRET, Accept: "text/html" } });
+    await flush();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(promise).resolves.toMatchObject({ json: { ok: true } });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    for (const call of [0, 1, 2]) {
+      expect(sentHeaders(fetcher, call).get("authorization")).toBe(SECRET);
+      expect(sentHeaders(fetcher, call).get("accept")).toBe("application/json");
+    }
+  });
+
+  it("sends only accept: application/json when the caller passes no headers", async () => {
+    const fetcher = sequence(() => jsonResponse("{}"));
+    await fetchFlippJson(ITEM_URL, fetcher);
+    expect([...sentHeaders(fetcher, 0)]).toEqual([["accept", "application/json"]]);
+  });
+
+  it.each([
+    ["an invalid value", { Authorization: `${SECRET}\nX-Injected: 1` }],
+    ["an invalid name", { "Bad Name": SECRET }],
+  ])("rejects a header with %s before any request, without echoing its value", async (_label, bad) => {
+    const fetcher = sequence(() => jsonResponse("{}"));
+    const error = await fetchFlippResponse(KROGER_URL, { fetcher, headers: bad }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FlippSourceError);
+    expect((error as Error).message).toMatch(/header/);
+    expect(inspect(error, { depth: 10 })).not.toContain(TOKEN);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, () => ReturnType<typeof sequence>]>([
+    ["a 401", () => sequence(() => jsonResponse('{"error":"invalid_token"}', { status: 401 }))],
+    ["a timeout", () => vi.fn<typeof fetch>(() => new Promise<Response>(() => undefined))],
+    ["a transport error whose cause quotes the header", () => throwing(new TypeError("fetch failed", {
+      cause: Object.assign(new Error(`invalid authorization "${SECRET}"`), { code: "UND_ERR_INVALID_ARG" }),
+    }))],
+    ["a transport error whose cause names only the token", () => throwing(new TypeError("fetch failed", {
+      cause: new Error(`token ${TOKEN} refused by proxy`),
+    }))],
+    ["a fetcher error that quotes the header value", () => throwing(new TypeError(`Headers.append: "${SECRET}" is an invalid header value.`))],
+    ["a body read failure that names the token", () => sequence(() => new Response(
+      new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error(`stream for ${TOKEN} reset`)); } }),
+      { status: 200, headers: { "content-type": JSON_TYPE } },
+    ))],
+    ["a cross-host redirect", () => sequence(() => statusResponse(302, { location: "https://backflipp.wishabi.com/flipp/items/1" }))],
+    ["a deferral", () => sequence(() => statusResponse(429, { "retry-after": "60" }))],
+    ["exhausted retries", () => sequence(() => statusResponse(503), () => statusResponse(503), () => statusResponse(503))],
+  ])("never records the header value on %s", async (_label, makeFetcher) => {
+    const fetcher = makeFetcher();
+    const attempts: FlippAttempt[] = [];
+    const caught = fetchFlippResponse(KROGER_URL, { fetcher, headers, onAttempt: (attempt) => attempts.push(attempt) })
+      .then(() => null, (error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(20_000);
+    const error = await caught;
+    expect(error instanceof FlippSourceError || error instanceof FlippDeferredError).toBe(true);
+    expect(sentHeaders(fetcher, 0).get("authorization")).toBe(SECRET);
+    expect(attempts.length).toBeGreaterThan(0);
+    const recorded = [(error as Error).message, inspect(error, { depth: 10 }), ...attempts.map(auditText)].join("\n");
+    expect(recorded).not.toContain(TOKEN);
+  });
+
+  it("never records the header value on success", async () => {
+    const attempts: FlippAttempt[] = [];
+    const fetcher = sequence(() => statusResponse(302, { location: "/v1/locations/70500807?hop=1" }), () => jsonResponse('{"ok":true}'));
+    const response = await fetchFlippResponse(KROGER_URL, { fetcher, headers, onAttempt: (attempt) => attempts.push(attempt) });
+    expect(attempts).toHaveLength(2);
+    expect([inspect(response, { depth: 10 }), ...attempts.map(auditText)].join("\n")).not.toContain(TOKEN);
+  });
+
+  it("keeps the transport diagnosis while redacting the header value", async () => {
+    const fetcher = throwing(new TypeError("fetch failed", {
+      cause: Object.assign(new Error(`invalid authorization "${SECRET}"`), { code: "UND_ERR_INVALID_ARG" }),
+    }));
+    const error = await fetchFlippResponse(KROGER_URL, { fetcher, headers }).catch((caught: unknown) => caught);
+    expect((error as Error).message).toMatch(/fetch failed \(cause: UND_ERR_INVALID_ARG: invalid authorization "\[redacted\]"\)/);
   });
 });
 

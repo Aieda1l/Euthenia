@@ -105,7 +105,7 @@ USDA Choice/Select and Angus claims are not yet a discriminator. That limitation
 **Context:** Several independent review rounds kept finding new retailer wordings where the open-vocabulary text rules produced a guessed value. Examples: alternatives outside the vocabulary, condition text inside package phrases, and hyphenated sizes. Each fix was sound, but the space of wordings is unbounded.  
 **Decision:**
 - Parsing is fail-closed by construction. Only positively understood text produces a known unit, price, package term, condition or identity value; anything else yields unknown or null with an issue, or `complete: false`.
-- Where a precise rule keeps leaking, prefer a blanket rule, even at a cost in coverage. Example: A13 treats any alternation in a description as unknown.
+- Where a precise rule keeps leaking, prefer a blanket rule, even at a cost in coverage. Example: A13 makes kind, variety, species and cut unknown whenever the description contains any alternation.
 - Reviews of the parser treat only realistic fail-open paths as blocking; lost coverage is not blocking.
 - The source-proof gate still counts only offers whose parser output a human has checked against the ad (R9 `verifiedFields`).
 - Task 2's automated ratings must use only structured, positively parsed fields, and must not treat ad-text parsing as ground truth without that validation.

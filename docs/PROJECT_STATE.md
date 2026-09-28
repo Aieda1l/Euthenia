@@ -9,7 +9,7 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 ## Active milestone
 
 - **Milestone:** M1 - Trustworthy local deals in a Windows window.
-- **Active plan:** [M1 implementation plan](plans/active/2026-09-19-m1-windows-deal-comparison.md). Its 2026-09-24 addendum R1-R12 and amendments A1-A12 are binding.
+- **Active plan:** [M1 implementation plan](plans/active/2026-09-19-m1-windows-deal-comparison.md). Its 2026-09-24 addendum R1-R12 and amendments A1-A14 are binding.
 - **Status:**
   - Task 1 code is complete and has been through two rounds of independent spec and quality review, each followed by fixes. A final re-review of ea20708 is in progress.
   - **The live source-proof gate is BLOCKED** ([M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md)).

@@ -749,7 +749,7 @@ describe("final spec/quality notes: description alternatives fail closed", () =>
   });
 
   it.each([
-    ["Fresh Boneless Skinless Chicken Thighs", "Bone-In or Boneless Skinless"],
+    ["Fresh Boneless Skinless Chicken Thighs", "Great for grilling or baking"],
     ["Fresh Boneless Beef New York Strip Steaks", "Great for grilling or broiling"],
   ])("meat %j with the description %j never keys", (name, description) => {
     expect(comparisonKey(meat(name, description))).toBeNull();
@@ -763,7 +763,8 @@ describe("final spec/quality notes: description alternatives fail closed", () =>
     expect(comparisonKey(meat(name, description))).toBeNull();
   });
 
-  it("\"Fresh Boneless Beef Brisket First Cut\" never shares the plain brisket key", () => {
-    expect(comparisonKey(meat("Fresh Boneless Beef Brisket First Cut"))).toBeNull();
+  it.each(["First Cut", "1st Cut", "2nd Cut"])("\"Fresh Boneless Beef Brisket %s\" never shares the plain brisket key", (suffix) => {
+    expect(comparisonKey(meat(`Fresh Boneless Beef Brisket ${suffix}`))).toBeNull();
+    expect(comparisonKey(meat("Fresh Boneless Beef Brisket", suffix))).toBeNull();
   });
 });

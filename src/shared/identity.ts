@@ -263,7 +263,7 @@ const PREPARATION = /\b(?:thin(?:ly)? (?:cut|sliced)|thick (?:cut|sliced)|sliced
  * description, where no cut phrase consumes them, any of these words
  * (including drumettes, a wing part) makes the cut unknown.
  */
-const CUT_RESIDUE = /\b(?:chuck|sirloin|round|rump|heel|eye|cross|arm|blade|bottom|top|tips?|tri|petite|flats?|flap|cap|center|ends?|inside|outside|thin|thick|frenched|strips?|slices?|cubes?|chunks?|pieces?|portions?|bites?|fillets?|filets?|medallions?|shaved|tenders?|halves|halved|half|split|sections?|drums?|drumm?ettes?|backs?|necks?|cut up|(?:first|second) cut|point|deckle|tomahawk|cowboy)\b/;
+const CUT_RESIDUE = /\b(?:chuck|sirloin|round|rump|heel|eye|cross|arm|blade|bottom|top|tips?|tri|petite|flats?|flap|cap|center|ends?|inside|outside|thin|thick|frenched|strips?|slices?|cubes?|chunks?|pieces?|portions?|bites?|fillets?|filets?|medallions?|shaved|tenders?|halves|halved|half|split|sections?|drums?|drumm?ettes?|backs?|necks?|cut up|(?:first|second|1st|2nd) cut|point|deckle|tomahawk|cowboy)\b/;
 
 /**
  * Cut vocabulary, most specific first. Specific cuts identify meat even
@@ -731,7 +731,7 @@ export function deriveIdentity(category: "produce" | "meat", name: string, descr
   const descriptionText = normalizeText(description ?? "").replace(MIX_AND_MATCH, " ");
   const fullText = normalizeText(`${name} ${description ?? ""}`).replace(MIX_AND_MATCH, " ");
   const assorted = ASSORTMENT.test(fullText) || /\bmix (?:and|&) match\b/.test(normalizeText(`${name} ${description ?? ""}`));
-  // F4 (R3): a description that lists alternatives ("or Boneless Chuck Roasts
+  // A13 (R3): a description that lists alternatives ("or Boneless Chuck Roasts
   // or Steaks" under "New York Strip Steaks", "or Organic Mandarins", "Mix &
   // Match ...") may name products outside the vocabulary, so any alternation
   // there makes the distinguishing fields (kind, variety, species, cut)

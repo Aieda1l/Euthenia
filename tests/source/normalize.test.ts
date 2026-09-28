@@ -720,3 +720,37 @@ describe("final quality/spec notes: hyphenated sizes and condition wording", () 
     },
   );
 });
+
+describe("5a4d590 review notes: fractions, hyphenated counts and package totals", () => {
+  it.each([
+    ["description", "Limit 2.5 lbs"],
+    ["description", "Min 3-lb"],
+    ["description", "Limit 2½ lbs"],
+    ["description", "Limit 2 1/2 lbs"],
+    ["description", "When you buy 1½ lbs"],
+    ["disclaimer_text", "Limit 2½ lbs"],
+  ])("%s %j is not read as a unit count", (field, text) => {
+    const offer = normalize(synthetic({ [field]: text, price_text: "lb" }));
+    expect(offer.conditions.maximumUnits).toBeNull();
+    expect(offer.conditions.minimumUnits).toBeNull();
+    expect(offer.conditions.complete).toBe(false);
+  });
+
+  it("a hyphenated count on an each-priced item blocks the each price", () => {
+    const offer = normalize(synthetic({ name: "Organic Romaine Hearts", description: "3-Ct.", price_text: "ea" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).not.toBeNull();
+  });
+
+  it("a hyphenated package total that contradicts the per-lb price blocks the unit price", () => {
+    const offer = normalize(synthetic({ description: "3-lb. Pkg for $14.97", price_text: "lb", current_price: "2.99" }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).not.toBeNull();
+  });
+
+  it("a consistent hyphenated package total is accepted like the spaced form", () => {
+    const offer = normalize(synthetic({ description: "3-lb. Pkg for $8.97", price_text: "lb", current_price: "2.99" }));
+    expect(offer.unitPrice).toEqual({ basis: "lb", cents: { n: "299", d: "1" } });
+    expect(offer.packageTotalCents).toBe(897);
+  });
+});

@@ -115,7 +115,7 @@ const N_FOR = /(?<![\d.])(0|[1-9]\d*) for\b/;
 /** Largest supported "N for" multi-buy; anything above is a normalization issue. */
 const MAX_MULTI_BUY = 100;
 const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
-const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/i;
+const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)[\s-]*lbs?\.?\s+package\s*$/i;
 // N4/B2: the amount may not continue with a digit or with "." and a digit, so
 // "$14.975" never parses as $14 or $14.97, while a sentence-final "$8.97." does.
 // F1: only package words and punctuation may stand between the mass and "for
@@ -124,7 +124,7 @@ const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\.?\s+package\s*$/
 // "N lb") means no package total, so that text stays in the condition scan.
 const PACKAGE_WORD = String.raw`(?:twin\s+packs?|packages?|pkgs?|packs?|bricks?)\b[\s.,-]*`;
 const PACKAGE_TOTAL = new RegExp(
-  String.raw`(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)\s*lbs?\b[\s.,-]*(?:${PACKAGE_WORD}){0,2}\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)`,
+  String.raw`(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)[\s-]*lbs?\b[\s.,-]*(?:${PACKAGE_WORD}){0,2}\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)`,
   "gi");
 const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?\s*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
 const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
@@ -135,9 +135,14 @@ const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:clamshells?|containers?|baskets?|box|boxes)\b/, "container"],
 ];
 const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?\s*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
-// Hyphenated sizes ("1-lb.", "16-oz.") count too.
-const STATED_MASS = /\b\d+(?:\.\d+)?[\s-]*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b/g;
-const STATED_COUNT = /(?<![\d.])(0|[1-9]\d*)\s*(?:ct|count)\b/g;
+// Mass units shared by the stated-mass scan and the weight guards below.
+const MASS_UNIT = String.raw`(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)`;
+// Hyphenated sizes and counts ("1-lb.", "16-oz.", "3-Ct.") count too.
+const STATED_MASS = new RegExp(String.raw`\b\d+(?:\.\d+)?[\s-]*${MASS_UNIT}\b`, "g");
+const STATED_COUNT = /(?<![\d.])(0|[1-9]\d*)[\s-]*(?:ct|count)\b/g;
+// A number followed by a decimal, a fraction ("1/2", or NFKD's "\u2044" from "½")
+// or a mass unit is not a unit count.
+const NOT_A_WEIGHT = String.raw`(?!\.\d|\s*\d*[/\u2044]\d|[\s-]*${MASS_UNIT}\b)`;
 
 // Loyalty phrases shared by the R6 condition rules and the A5 price vocabulary.
 const NO_LOYALTY = /\bno (?:card|membership) (?:needed|required)\b/g;
@@ -389,11 +394,12 @@ const CONDITION_RULES: ReadonlyArray<readonly [RegExp, (groups: MatchGroups, sta
   [/\b(?:no (?:digital )?coupons?(?: (?:needed|required|necessary))?|(?:digital )?coupons? not (?:needed|required|necessary))\b/g,
     (_, s) => s.coupon.add(false)],
   [/\b(?:with )?(?:digital )?coupons?(?: required)?\b/g, (_, s) => s.coupon.add(true)],
-  // A limit or minimum stated as a weight ("Limit 10 lbs") is not a unit
-  // count, so those rules skip it and the text stays unrecognized.
-  [/\blimit (\d+)\b(?!\.\d|[\s-]*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b)(?: per (?:household|customer|transaction|order|day|visit))?\b/g,
+  // A14: a limit or minimum stated as a weight ("Limit 10 lbs", "2.5 lbs",
+  // "2 1/2 lbs") is not a unit count, so those rules skip it and the text
+  // stays unrecognized.
+  [new RegExp(String.raw`\blimit (\d+)\b${NOT_A_WEIGHT}(?: per (?:household|customer|transaction|order|day|visit))?\b`, "g"),
     (g, s) => s.maximum.add(Number(g[1]))],
-  [/\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b(?!\.\d|[\s-]*(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)\b)/g,
+  [new RegExp(String.raw`\b(?:must buy|must purchase|when you buy|minimum(?: purchase)?(?: of)?|min)\s+(\d+)\b${NOT_A_WEIGHT}`, "g"),
     (g, s) => s.minimum.add(Number(g[1]))],
   [/\b\d+ for\b/g, () => undefined],
   [/\bper (?:lb|pound|each)\b|\b(?:lbs?|ea|each)\b/g, () => undefined],

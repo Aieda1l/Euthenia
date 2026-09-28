@@ -21,7 +21,8 @@ export type Identity =
       freshFrozen: Known<"fresh" | "frozen">; fatPercent: Known<number> };
 
 export interface Evidence {
-  id: string; provider: "flipp" | "pcc"; sourceItemId: string;
+  id: string; provider: "flipp" | "pcc" | "kroger-api" | "safeway-search";
+  sourceItemId: string;
   retrievedUrl: string; sourceUrl: string; observedAt: string;
   rawSha256: string; rawValidity: Record<string, string | null>;
 }
@@ -47,14 +48,16 @@ export interface Offer {
   conditions: Conditions; evidence: Evidence[];
   observedAt: string;
   startsAt: string | null; expiresAt: string | null;
-  calendarRule: "verified-local-date" | "explicit-instant" | "unknown";
+  calendarRule:
+    | "verified-local-date" | "explicit-instant" | "catalog-observation" | "unknown";
 }
 export interface Validation {
   offerId: string; checkedAt: string; evidenceIds: string[];
   verifiedFields: string[]; applicabilityEvidence: string; calendarEvidence: string;
 }
 export interface Proof {
-  validatedAt: string; families: [Family, Family]; validations: Validation[];
+  validatedAt: string; families: [Family, Family]; channel: Channel;
+  validations: Validation[];
   pairs: Array<{ leftId: string; rightId: string; category: "produce" | "meat" }>;
 }
 export interface SourceSnapshot {
@@ -116,10 +119,21 @@ export interface FlyerAttestation {
   startLocalTime: string;
 }
 
+/**
+ * Per-store human attestation for catalog prices (catalog price amendment,
+ * section 3): the retailer's page for this store matches the store lookup.
+ */
+export interface StoreAttestation {
+  family: Family; provider: "kroger-api" | "safeway-search"; storeId: string;
+  checkedAt: string; applicability: "verified"; applicabilityEvidence: string;
+}
+
 /** Human validation input file for the collector (addendum R9). */
 export interface ValidationFile {
   schemaVersion: 1;
   attestations: FlyerAttestation[];
+  /** Catalog store attestations; absent means none. */
+  storeAttestations?: StoreAttestation[];
   /** Bound to exact responses through raw-hash evidence IDs. */
   validations: Validation[];
   /** Human-checked cross-family pairs. */

@@ -8,6 +8,7 @@ import type {
   Offer,
   Proof,
   SourceSnapshot,
+  StoreAttestation,
   Validation,
   ValidationFile,
 } from "../shared/contracts.js";
@@ -148,11 +149,11 @@ function fail(problem: string): never {
   throw new CollectInputError(problem);
 }
 
-function objectWith(value: unknown, where: string, keys: readonly string[]): Record<string, unknown> {
+function objectWith(value: unknown, where: string, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${where} must be an object`);
   const record = value as Record<string, unknown>;
   for (const key of keys) if (!(key in record)) fail(`${where} is missing ${key}`);
-  for (const key of Object.keys(record)) if (!keys.includes(key)) fail(`${where} has unknown key ${key}`);
+  for (const key of Object.keys(record)) if (!keys.includes(key) && !optional.includes(key)) fail(`${where} has unknown key ${key}`);
   return record;
 }
 
@@ -180,6 +181,8 @@ function literalAt<T extends string>(value: unknown, allowed: readonly T[], wher
 const ATTESTATION_KEYS = ["family", "flyerId", "checkedAt", "applicability", "applicabilityEvidence", "calendarRule", "calendarEvidence", "startLocalTime"] as const;
 const VALIDATION_KEYS = ["offerId", "checkedAt", "evidenceIds", "verifiedFields", "applicabilityEvidence", "calendarEvidence"] as const;
 const PAIR_KEYS = ["leftId", "rightId", "category"] as const;
+const STORE_ATTESTATION_KEYS = ["family", "provider", "storeId", "checkedAt", "applicability", "applicabilityEvidence"] as const;
+const STORE_PROVIDERS = ["kroger-api", "safeway-search"] as const;
 
 export function parseValidationFile(text: string): ValidationFile {
   let value: unknown;
@@ -188,7 +191,7 @@ export function parseValidationFile(text: string): ValidationFile {
   } catch (error) {
     fail(`not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const root = objectWith(value, "file", ["schemaVersion", "attestations", "validations", "pairs"]);
+  const root = objectWith(value, "file", ["schemaVersion", "attestations", "validations", "pairs"], ["storeAttestations"]);
   if (root.schemaVersion !== 1) fail("schemaVersion must be 1");
   const attestations = arrayAt(root.attestations, "attestations").map((entry, index): FlyerAttestation => {
     const where = `attestations[${index}]`;
@@ -206,6 +209,20 @@ export function parseValidationFile(text: string): ValidationFile {
       startLocalTime: stringAt(record.startLocalTime, `${where}.startLocalTime`),
     };
   });
+  // Catalog amendment: optional; absent means none. Semantics are judged by storeAttestationFor.
+  const storeAttestations = !("storeAttestations" in root) ? undefined
+    : arrayAt(root.storeAttestations, "storeAttestations").map((entry, index): StoreAttestation => {
+      const where = `storeAttestations[${index}]`;
+      const record = objectWith(entry, where, STORE_ATTESTATION_KEYS);
+      return {
+        family: literalAt(record.family, FAMILY_NAMES, `${where}.family`),
+        provider: literalAt(record.provider, STORE_PROVIDERS, `${where}.provider`),
+        storeId: stringAt(record.storeId, `${where}.storeId`),
+        checkedAt: stringAt(record.checkedAt, `${where}.checkedAt`),
+        applicability: literalAt(record.applicability, ["verified"] as const, `${where}.applicability`),
+        applicabilityEvidence: stringAt(record.applicabilityEvidence, `${where}.applicabilityEvidence`),
+      };
+    });
   const validations = arrayAt(root.validations, "validations").map((entry, index): Validation => {
     const where = `validations[${index}]`;
     const record = objectWith(entry, where, VALIDATION_KEYS);
@@ -227,7 +244,7 @@ export function parseValidationFile(text: string): ValidationFile {
       category: literalAt(record.category, ["produce", "meat"] as const, `${where}.category`),
     };
   });
-  return { schemaVersion: 1, attestations, validations, pairs };
+  return { schemaVersion: 1, attestations, ...(storeAttestations === undefined ? {} : { storeAttestations }), validations, pairs };
 }
 
 /** `shown` is the display path; file-system messages (which embed the absolute path) are reduced to their code. */
@@ -754,7 +771,8 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
 
     const evaluatedAt = clock();
     log.evaluatedAt = evaluatedAt.toISOString();
-    const { proof, notes } = assembleProof(file, offers, [PROOF_FAMILIES[0], PROOF_FAMILIES[1]], evaluatedAt.toISOString());
+    // Interim gate channel: in-store-ad until K2 switches it to the D1 channel (retailer-pickup).
+    const { proof, notes } = assembleProof(file, offers, [PROOF_FAMILIES[0], PROOF_FAMILIES[1]], evaluatedAt.toISOString(), "in-store-ad");
     log.proofNotes = notes;
     const snapshot: SourceSnapshot = { schemaVersion: 1, postalCode: POSTAL_CODE, collectedAt: log.collectedAt, offers, proof };
     const evaluation = evaluateProof(snapshot, evaluatedAt);

@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { REQUIRED_VERIFIED_FIELDS, type Family, type SourceSnapshot, type ValidationFile } from "../../src/shared/contracts.js";
 import { comparisonKey } from "../../src/shared/identity.js";
-import { collect, parseCollectArgs, terminalSafe, type CollectOptions } from "../../src/source/collect.js";
+import { collect, parseCollectArgs, parseValidationFile, terminalSafe, type CollectOptions } from "../../src/source/collect.js";
 import { checkProof } from "../../src/source/proof.js";
 import { item } from "../fixtures/source.js";
 
@@ -58,6 +58,11 @@ const itemUrl = (id: number) => `${BASE}/items/${id}`;
 
 const CURRENT = { valid_from: "2026-09-23T00:00:00-04:00", valid_to: "2026-09-29T23:59:59-04:00" };
 const EXPIRED = { valid_from: "2026-09-16T00:00:00-04:00", valid_to: "2026-09-22T23:59:59-04:00" };
+/** A synthetic store attestation (catalog amendment); 91000001 is an invented locationId. */
+const STORE_ATTESTATION = {
+  family: "kroger", provider: "kroger-api", storeId: "91000001", checkedAt: "2026-09-24T18:00:00.000Z",
+  applicability: "verified", applicabilityEvidence: "synthetic store attestation",
+} as const;
 const BIG_BOOK = { valid_from: "2026-09-08T00:00:00-04:00", valid_to: "2026-10-04T23:59:59-04:00" };
 
 // Research fixture IDs (historical); flyer IDs match the fixture items' flyer_id.
@@ -970,6 +975,43 @@ describe("report text safety", () => {
   });
 });
 
+describe("parseValidationFile storeAttestations (catalog amendment)", () => {
+  const base = { schemaVersion: 1, attestations: [], validations: [], pairs: [] };
+  const parse = (value: unknown) => parseValidationFile(JSON.stringify(value));
+
+  it("absent storeAttestations means none", () => {
+    const parsed = parse(base);
+    expect(parsed).toEqual(base);
+    expect("storeAttestations" in parsed).toBe(false);
+  });
+
+  it("parses valid store attestations exactly", () => {
+    const safeway = { ...STORE_ATTESTATION, family: "albertsons", provider: "safeway-search", storeId: "9200" };
+    expect(parse({ ...base, storeAttestations: [STORE_ATTESTATION, safeway] })).toEqual({ ...base, storeAttestations: [STORE_ATTESTATION, safeway] });
+    expect(parse({ ...base, storeAttestations: [] })).toEqual({ ...base, storeAttestations: [] });
+  });
+
+  it.each<[string, unknown, RegExp]>([
+    ["a null list", null, /storeAttestations must be an array/],
+    ["an object list", {}, /storeAttestations must be an array/],
+    ["a non-object entry", ["x"], /storeAttestations\[0\] must be an object/],
+    ["an unknown key", [{ ...STORE_ATTESTATION, flyerId: 1 }], /storeAttestations\[0\] has unknown key flyerId/],
+    ["a missing storeId", [{ ...STORE_ATTESTATION, storeId: undefined }], /storeAttestations\[0\] is missing storeId/],
+    ["a numeric storeId", [{ ...STORE_ATTESTATION, storeId: 91000001 }], /storeAttestations\[0\]\.storeId must be a string/],
+    ["an unknown family", [{ ...STORE_ATTESTATION, family: "costco" }], /storeAttestations\[0\]\.family must be one of/],
+    ["an unknown provider", [{ ...STORE_ATTESTATION, provider: "flipp" }], /storeAttestations\[0\]\.provider must be one of "kroger-api", "safeway-search"/],
+    ["an unverified applicability", [{ ...STORE_ATTESTATION, applicability: "unknown" }], /storeAttestations\[0\]\.applicability must be one of "verified"/],
+    ["a non-string checkedAt", [{ ...STORE_ATTESTATION, checkedAt: 1 }], /storeAttestations\[0\]\.checkedAt must be a string/],
+    ["a non-string applicabilityEvidence", [{ ...STORE_ATTESTATION, applicabilityEvidence: null }], /storeAttestations\[0\]\.applicabilityEvidence must be a string/],
+  ])("rejects %s", (_label, storeAttestations, message) => {
+    expect(() => parse({ ...base, storeAttestations })).toThrow(message);
+  });
+
+  it("still rejects other unknown root keys", () => {
+    expect(() => parse({ ...base, storeAttestation: [] })).toThrow(/file has unknown key storeAttestation/);
+  });
+});
+
 describe("inputs", () => {
   it.each([
     ["not JSON", "{ nope"],
@@ -980,6 +1022,9 @@ describe("inputs", () => {
     ["a validation missing verifiedFields", { schemaVersion: 1, attestations: [], validations: [{ offerId: "a", checkedAt: "x", evidenceIds: [], applicabilityEvidence: "x", calendarEvidence: "x" }], pairs: [] }],
     ["a pair with a bad category", { schemaVersion: 1, attestations: [], validations: [], pairs: [{ leftId: "a", rightId: "b", category: "seafood" }] }],
     ["an unknown key", { schemaVersion: 1, attestations: [], validations: [], pairs: [], pair: [] }],
+    ["storeAttestations that is not an array", { schemaVersion: 1, attestations: [], storeAttestations: {}, validations: [], pairs: [] }],
+    ["a store attestation with an unknown key", { schemaVersion: 1, attestations: [], storeAttestations: [{ ...STORE_ATTESTATION, note: "x" }], validations: [], pairs: [] }],
+    ["a store attestation with an unknown provider", { schemaVersion: 1, attestations: [], storeAttestations: [{ ...STORE_ATTESTATION, provider: "flipp" }], validations: [], pairs: [] }],
   ])("a validations file with %s exits 2 before any request", async (_label, content) => {
     seedPriorSnapshot();
     const { fetcher } = routes(fixtureWorld().map);
@@ -1000,6 +1045,21 @@ describe("inputs", () => {
     expect(readFileSync(join(result.auditDir, "diagnostics.json"), "utf8")).not.toContain(root);
     expect(auditReport(result.auditDir)).not.toContain(root);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("accepts a validations file with storeAttestations; the interim gate channel is in-store-ad", async () => {
+    const world = syntheticWorld();
+    const file: ValidationFile = { ...world.file, storeAttestations: [STORE_ATTESTATION] };
+    const result = await run(routes(world.map).fetcher, { validationsPath: writeValidations(file) });
+    expect(result.exitCode).toBe(0);
+    expect(result.snapshot?.proof.channel).toBe("in-store-ad");
+    expect((readJson(snapshotPath) as unknown as SourceSnapshot).proof.channel).toBe("in-store-ad");
+  });
+
+  it("the collector's proof channel is in-store-ad even when BLOCKED", async () => {
+    const result = await run(routes(fixtureWorld().map).fetcher);
+    expect(result.status).toBe("BLOCKED");
+    expect(result.snapshot?.proof.channel).toBe("in-store-ad");
   });
 
   it("accepts a validations file with a UTF-8 BOM", async () => {

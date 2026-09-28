@@ -85,7 +85,8 @@ export type Identity =
       freshFrozen: Known<"fresh" | "frozen">; fatPercent: Known<number> };
 
 export interface Evidence {
-  id: string; provider: "flipp" | "pcc"; sourceItemId: string;
+  id: string; provider: "flipp" | "pcc" | "kroger-api" | "safeway-search";
+  sourceItemId: string;
   retrievedUrl: string; sourceUrl: string; observedAt: string;
   rawSha256: string; rawValidity: Record<string, string | null>;
 }
@@ -111,14 +112,16 @@ export interface Offer {
   conditions: Conditions; evidence: Evidence[];
   observedAt: string;
   startsAt: string | null; expiresAt: string | null;
-  calendarRule: "verified-local-date" | "explicit-instant" | "unknown";
+  calendarRule:
+    | "verified-local-date" | "explicit-instant" | "catalog-observation" | "unknown";
 }
 export interface Validation {
   offerId: string; checkedAt: string; evidenceIds: string[];
   verifiedFields: string[]; applicabilityEvidence: string; calendarEvidence: string;
 }
 export interface Proof {
-  validatedAt: string; families: [Family, Family]; validations: Validation[];
+  validatedAt: string; families: [Family, Family]; channel: Channel;
+  validations: Validation[];
   pairs: Array<{ leftId: string; rightId: string; category: "produce" | "meat" }>;
 }
 export interface SourceSnapshot {

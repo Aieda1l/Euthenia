@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   REQUIRED_VERIFIED_FIELDS,
+  type Evidence,
   type Family,
   type FlyerAttestation,
   type Identity,
   type Offer,
   type Proof,
   type SourceSnapshot,
+  type StoreAttestation,
   type Validation,
   type ValidationFile,
 } from "../../src/shared/contracts.js";
@@ -17,6 +19,7 @@ import {
   candidatePairs,
   checkProof,
   evaluateProof,
+  storeAttestationFor,
 } from "../../src/source/proof.js";
 
 // SYNTHETIC proof fixtures, for exercising evaluateProof only. They are built
@@ -117,7 +120,7 @@ function snapshot(options: { kroger?: Identity[]; albertsons?: Identity[]; pairI
   }));
   return {
     schemaVersion: 1, postalCode: "98105", collectedAt: OBSERVED_AT, offers,
-    proof: { validatedAt: "2026-09-24T13:00:00.000Z", families: ["kroger", "albertsons"], validations: offers.map(validationFor), pairs },
+    proof: { validatedAt: "2026-09-24T13:00:00.000Z", families: ["kroger", "albertsons"], channel: "in-store-ad", validations: offers.map(validationFor), pairs },
   };
 }
 
@@ -608,6 +611,371 @@ describe("A7: R7 identity enforcement (synthetic)", () => {
   });
 });
 
+// SYNTHETIC catalog fixtures (catalog price amendment, section 3), for
+// evaluateProof only. The product IDs are invented 13-digit values
+// (9100000000000+ kroger, 9200000000000+ albertsons), the store scopes are
+// invented 8-digit locationIds (91000001, 91000002), each rawSha256 hashes the
+// placeholder text "synthetic search <url>" (so offers from one synthetic
+// search share a hash, as real search responses do), and the example.invalid
+// URLs resolve nowhere. Nothing was collected; they are not live evidence and
+// must never appear in a snapshot or in docs/research/M1_SOURCE_PROOF.md.
+
+type CatalogProvider = StoreAttestation["provider"];
+const SCOPE = "91000001";
+const OTHER_SCOPE = "91000002";
+const CATALOG_ID_BASE: Record<Family, number> = { kroger: 9_100_000_000_000, albertsons: 9_200_000_000_000, pcc: 9_300_000_000_000 };
+const SAFEWAY_PLACEHOLDER_URL = "https://example.invalid/synthetic-safeway-search?storeid=9200";
+
+function catalogProvider(family: Family): CatalogProvider {
+  return family === "albertsons" ? "safeway-search" : "kroger-api";
+}
+function catalogItemId(family: Family, index: number): string {
+  return String(CATALOG_ID_BASE[family] + index);
+}
+function catalogOfferId(family: Family, index: number): string {
+  return `${catalogProvider(family)}:${family}:${catalogItemId(family, index)}`;
+}
+function krogerProductsUrl(locationId: string): string {
+  return `https://api.kroger.com/v1/products?filter.term=synthetic&filter.locationId=${locationId}&filter.limit=20`;
+}
+
+function makeCatalogOffer(
+  family: Family, sourceItemId: string, identity: Identity,
+  options: { provider?: CatalogProvider; retrievedUrl?: string } = {},
+): Offer {
+  const provider = options.provider ?? catalogProvider(family);
+  const retrievedUrl = options.retrievedUrl ?? (provider === "kroger-api" ? krogerProductsUrl(SCOPE) : SAFEWAY_PLACEHOLDER_URL);
+  const rawSha256 = sha(`synthetic search ${retrievedUrl}`);
+  return {
+    id: `${provider}:${family}:${sourceItemId}`, family, retailer: `Synthetic ${family}`, label: `synthetic catalog ${sourceItemId}`,
+    postalCode: "98105", storeName: null, storeAddress: null,
+    applicability: "verified", channel: "retailer-pickup", identity,
+    rawPrice: { regular: "1.99", promo: null, size: "1 lb", soldBy: "WEIGHT" },
+    unitPrice: { basis: "lb", cents: { n: "199", d: "1" } },
+    normalizationIssue: null, packageMassLb: null, packageCount: null, packageTotalCents: null,
+    conditions: { complete: true, loyaltyRequired: false, couponRequired: false, couponIds: [], minimumUnits: null, maximumUnits: null, text: [] },
+    evidence: [{
+      id: `${provider}:product:${sourceItemId}:${rawSha256.slice(0, 12)}`, provider, sourceItemId, retrievedUrl,
+      sourceUrl: `https://example.invalid/synthetic-products/${sourceItemId}`,
+      observedAt: OBSERVED_AT, rawSha256, rawValidity: {},
+    }],
+    observedAt: OBSERVED_AT,
+    startsAt: null, expiresAt: null,
+    calendarRule: "catalog-observation",
+  };
+}
+
+/** 10 kroger-api + 10 safeway-search offers in retailer-pickup, pairs on indices 0..4. */
+function catalogSnapshot(): SourceSnapshot {
+  const offers = (["kroger", "albertsons"] as const).flatMap((family) =>
+    IDENTITIES.map((identity, i) => makeCatalogOffer(family, catalogItemId(family, i), identity)));
+  const pairs = [0, 1, 2, 3, 4].map((i) => ({ leftId: catalogOfferId("kroger", i), rightId: catalogOfferId("albertsons", i), category: IDENTITIES[i]!.category }));
+  return {
+    schemaVersion: 1, postalCode: "98105", collectedAt: OBSERVED_AT, offers,
+    proof: { validatedAt: "2026-09-24T13:00:00.000Z", families: ["kroger", "albertsons"], channel: "retailer-pickup", validations: offers.map(validationFor), pairs },
+  };
+}
+
+/** Replaces the offer at `id` and rebinds every validation to the current evidence. */
+function replaceOffer(snap: SourceSnapshot, id: string, replacement: Offer): void {
+  snap.offers = snap.offers.map((candidate) => (candidate.id === id ? replacement : candidate));
+  snap.proof.validations = snap.offers.map(validationFor);
+  for (const pair of snap.proof.pairs) {
+    if (pair.leftId === id) pair.leftId = replacement.id;
+    if (pair.rightId === id) pair.rightId = replacement.id;
+  }
+}
+
+const KC0 = catalogOfferId("kroger", 0);
+const AC0 = catalogOfferId("albertsons", 0);
+const SAFEWAY_PENDING = /safeway-search evidence is excluded until S1 defines its pattern/;
+
+describe("catalog channel gate (amendment section 3, synthetic)", () => {
+  it("10+10 catalog offers with 5 pairs in retailer-pickup: every kroger-api offer counts; only the pending S1 safeway-search rule blocks the gate", () => {
+    const evaluation = evaluateProof(catalogSnapshot(), NOW);
+    expect(evaluation.families.kroger).toMatchObject({ count: 10, produce: 7, meat: 3 });
+    expect(evaluation.excluded.filter((entry) => entry.offerId.startsWith("kroger-api:"))).toEqual([]);
+    const albertsons = evaluation.excluded.filter((entry) => entry.offerId.startsWith("safeway-search:albertsons:"));
+    expect(albertsons).toHaveLength(10);
+    for (const entry of albertsons) expect(entry.reasons).toEqual([expect.stringMatching(SAFEWAY_PENDING)]);
+    expect(evaluation.failures).toEqual([
+      "albertsons: 0 qualifying source items (need at least 10)",
+      "albertsons: no qualifying produce",
+      "albertsons: no qualifying meat",
+      "0 counted pairs (need at least 5)",
+      "no counted produce pair",
+      "no counted meat pair",
+    ]);
+    expect(evaluation.skippedPairs.map(({ reason }) => reason)).toEqual(
+      [0, 1, 2, 3, 4].map((i) => `${catalogOfferId("albertsons", i)} is not a qualifying offer`));
+    expect(evaluation.ok).toBe(false);
+  });
+
+  it("5 ad + 5 catalog offers per chain fail: counts never add across channels", () => {
+    const offers = (["kroger", "albertsons"] as const).flatMap((family) => IDENTITIES.map((identity, i) =>
+      (i < 5 ? makeOffer(family, itemId(family, i), identity) : makeCatalogOffer(family, catalogItemId(family, i), identity))));
+    const pairs = [
+      ...[0, 1, 2, 3, 4].map((i) => ({ leftId: offerId("kroger", i), rightId: offerId("albertsons", i), category: IDENTITIES[i]!.category })),
+      ...[5, 6, 7, 8, 9].map((i) => ({ leftId: catalogOfferId("kroger", i), rightId: catalogOfferId("albertsons", i), category: IDENTITIES[i]!.category })),
+    ];
+    const mixed = (channel: Proof["channel"]): SourceSnapshot => ({
+      schemaVersion: 1, postalCode: "98105", collectedAt: OBSERVED_AT, offers,
+      proof: { validatedAt: "2026-09-24T13:00:00.000Z", families: ["kroger", "albertsons"], channel, validations: offers.map(validationFor), pairs },
+    });
+
+    const pickup = evaluateProof(mixed("retailer-pickup"), NOW);
+    expect(pickup.ok).toBe(false);
+    expect(pickup.families.kroger.count).toBe(5);
+    expect(pickup.failures).toContain("kroger: 5 qualifying source items (need at least 10)");
+    expect(exclusion(mixed("retailer-pickup"), K0)).toMatch(/channel in-store-ad is not the gate channel/);
+
+    const ad = evaluateProof(mixed("in-store-ad"), NOW);
+    expect(ad.ok).toBe(false);
+    expect(ad.families.kroger.count).toBe(5);
+    expect(ad.families.albertsons.count).toBe(5);
+    expect(ad.failures).toEqual(expect.arrayContaining([
+      "kroger: 5 qualifying source items (need at least 10)",
+      "albertsons: 5 qualifying source items (need at least 10)",
+    ]));
+    expect(exclusion(mixed("in-store-ad"), catalogOfferId("kroger", 5))).toMatch(/channel retailer-pickup is not the gate channel/);
+  });
+
+  it("rule 1: an offer outside proof.channel is excluded with a reason", () => {
+    const snap = catalogSnapshot();
+    offer(snap, KC0).channel = "in-store-ad";
+    expect(exclusion(snap, KC0)).toMatch(/channel in-store-ad is not the gate channel/);
+    expect(evaluateProof(snap, NOW).families.kroger.count).toBe(9);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unknown", "telepathy"],
+    ["not a string", 7],
+  ])("rule 1: a %s proof.channel is a gate failure", (_label, channel) => {
+    const snap = snapshot();
+    (snap.proof as unknown as Record<string, unknown>).channel = channel;
+    if (channel === undefined) delete (snap.proof as Partial<Proof>).channel;
+    const evaluation = evaluateProof(snap, NOW);
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.failures.join("\n")).toMatch(/proof channel .* is missing or not a known channel/);
+    expect(exclusion(snap, K0)).toMatch(/not the gate channel/);
+  });
+
+  it("rule 2: kroger-api evidence on albertsons is excluded", () => {
+    const snap = catalogSnapshot();
+    const stray = makeCatalogOffer("albertsons", catalogItemId("albertsons", 20), IDENTITIES[0]!, { provider: "kroger-api" });
+    snap.offers.push(stray);
+    snap.proof.validations.push(validationFor(stray));
+    expect(stray.id).toBe(`kroger-api:albertsons:${catalogItemId("albertsons", 20)}`);
+    expect(exclusion(snap, stray.id)).toMatch(/provider kroger-api is allowed only for family kroger/);
+    expect(evaluateProof(snap, NOW).families.albertsons.count).toBe(0);
+  });
+
+  it("rule 2: safeway-search is excluded pending S1", () => {
+    expect(exclusion(catalogSnapshot(), AC0)).toMatch(SAFEWAY_PENDING);
+  });
+
+  it("rule 2: a provider other than flipp, kroger-api or safeway-search is excluded", () => {
+    const snap = catalogSnapshot();
+    offer(snap, KC0).evidence[0]!.provider = "pcc";
+    expect(exclusion(snap, KC0)).toMatch(/provider "pcc"/);
+  });
+
+  it("rule 2: a 13-digit kroger-api ID with leading zeros counts", () => {
+    const snap = catalogSnapshot();
+    const zeros = makeCatalogOffer("kroger", "0000000009100", IDENTITIES[0]!);
+    replaceOffer(snap, KC0, zeros);
+    const evaluation = evaluateProof(snap, NOW);
+    expect(zeros.id).toBe("kroger-api:kroger:0000000009100");
+    expect(exclusion(snap, zeros.id)).toBe("");
+    expect(evaluation.families.kroger.count).toBe(10);
+    expect(evaluation.families.kroger.sourceItemIds).toContain("0000000009100");
+  });
+
+  it.each([
+    ["12 digits", "910000000000"],
+    ["14 digits", "91000000000000"],
+    ["a letter", "910000000000a"],
+    ["a sign", "+910000000000"],
+  ])("rule 2: a kroger-api sourceItemId with %s is excluded", (_label, id) => {
+    const snap = catalogSnapshot();
+    const bad = makeCatalogOffer("kroger", id, IDENTITIES[0]!);
+    replaceOffer(snap, KC0, bad);
+    expect(exclusion(snap, bad.id)).toMatch(/13-digit/);
+  });
+
+  it.each([
+    ["http", `http://api.kroger.com/v1/products?filter.locationId=${SCOPE}`],
+    ["another path", `https://api.kroger.com/v1/locations?filter.locationId=${SCOPE}`],
+    ["another host", `https://api.kroger.com.example.invalid/v1/products?filter.locationId=${SCOPE}`],
+    ["a credential", `https://user:secret@api.kroger.com/v1/products?filter.locationId=${SCOPE}`],
+    ["no locationId", "https://api.kroger.com/v1/products?filter.term=synthetic"],
+    ["a 7-digit locationId", "https://api.kroger.com/v1/products?filter.locationId=9100000"],
+    ["a 9-digit locationId", "https://api.kroger.com/v1/products?filter.locationId=910000010"],
+    ["two locationIds", `https://api.kroger.com/v1/products?filter.locationId=${SCOPE}&filter.locationId=${SCOPE}`],
+  ])("rule 2: a kroger-api retrievedUrl with %s is excluded", (_label, retrievedUrl) => {
+    const snap = catalogSnapshot();
+    replaceOffer(snap, KC0, makeCatalogOffer("kroger", catalogItemId("kroger", 0), IDENTITIES[0]!, { retrievedUrl }));
+    expect(exclusion(snap, KC0)).toMatch(/retrievedUrl is not https:\/\/api\.kroger\.com\/v1\/products\?/);
+  });
+
+  it("rule 2: catalog IDs are <provider>:product:<sourceItemId>:<hash12> and <provider>:<family>:<sourceItemId>", () => {
+    const wrongEvidence = catalogSnapshot();
+    const evidence = offer(wrongEvidence, KC0).evidence[0]!;
+    evidence.id = `kroger-api:item:${evidence.sourceItemId}:${evidence.rawSha256.slice(0, 12)}`;
+    wrongEvidence.proof.validations = wrongEvidence.offers.map(validationFor);
+    expect(exclusion(wrongEvidence, KC0)).toMatch(/does not match its raw hash and source item \(catalog id kroger-api:product:/);
+
+    const wrongOffer = catalogSnapshot();
+    const renamed: Offer = { ...offer(wrongOffer, KC0), id: `flipp:kroger:${catalogItemId("kroger", 0)}` };
+    replaceOffer(wrongOffer, KC0, renamed);
+    expect(exclusion(wrongOffer, renamed.id)).toMatch(/offer id flipp:kroger:\d+ is not the catalog id kroger-api:kroger:/);
+  });
+
+  it("rule 3: a catalog offer with dates is excluded", () => {
+    for (const change of [
+      { startsAt: "2026-09-23T14:00:00.000Z", expiresAt: "2026-09-30T07:00:00.000Z" },
+      { expiresAt: "2026-09-30T07:00:00.000Z" },
+    ]) {
+      const snap = catalogSnapshot();
+      Object.assign(offer(snap, KC0), change);
+      expect(exclusion(snap, KC0)).toMatch(/catalog-observation requires startsAt and expiresAt to be null/);
+    }
+  });
+
+  it("rule 3: a catalog offer with another calendar rule is excluded", () => {
+    const snap = catalogSnapshot();
+    Object.assign(offer(snap, KC0), { calendarRule: "verified-local-date", startsAt: "2026-09-23T14:00:00.000Z", expiresAt: "2026-09-30T07:00:00.000Z" });
+    expect(exclusion(snap, KC0)).toMatch(/catalog offer calendar rule verified-local-date is not catalog-observation/);
+  });
+
+  it("rule 3: Flipp may not use catalog-observation", () => {
+    const snap = snapshot();
+    Object.assign(offer(snap, K0), { calendarRule: "catalog-observation", startsAt: null, expiresAt: null });
+    expect(exclusion(snap, K0)).toMatch(/calendar rule catalog-observation is only for catalog providers/);
+    expect(checkProof(snap, NOW).ok).toBe(false);
+  });
+
+  it("rule 4: two locationIds in one family exclude that family's catalog offers", () => {
+    const snap = catalogSnapshot();
+    const id = catalogOfferId("kroger", 9);
+    replaceOffer(snap, id, makeCatalogOffer("kroger", catalogItemId("kroger", 9), IDENTITIES[9]!, { retrievedUrl: krogerProductsUrl(OTHER_SCOPE) }));
+    const evaluation = evaluateProof(snap, NOW);
+    expect(evaluation.families.kroger.count).toBe(0);
+    for (const i of [0, 9]) {
+      expect(exclusion(snap, catalogOfferId("kroger", i))).toMatch(
+        new RegExp(`kroger catalog offers span more than one store scope \\(filter\\.locationId=${SCOPE}, filter\\.locationId=${OTHER_SCOPE}\\)`));
+    }
+  });
+
+  it("rule 5: counts and pairs are keyed by <provider>:<sourceItemId>, so equal IDs from two providers never collide", () => {
+    // The proof binds no provider to a channel (section 3 has no such rule;
+    // channel is a human-verified field), so a Flipp offer in the gate channel
+    // puts both providers' items into one count.
+    const snap = catalogSnapshot();
+    const flipps = IDENTITIES.map((identity, i) => ({ ...makeOffer("albertsons", catalogItemId("kroger", i), identity), channel: "retailer-pickup" as const }));
+    snap.offers = [...snap.offers.filter((candidate) => candidate.family === "kroger"), ...flipps];
+    snap.proof.validations = snap.offers.map(validationFor);
+    snap.proof.pairs = [0, 1, 2, 3, 4].map((i) => ({ leftId: catalogOfferId("kroger", i), rightId: flipps[i]!.id, category: IDENTITIES[i]!.category }));
+    const evaluation = evaluateProof(snap, NOW);
+    expect(evaluation.families.kroger.count).toBe(10);
+    expect(evaluation.families.albertsons.count).toBe(10);
+    expect(evaluation.countedPairs).toHaveLength(5);
+    expect(evaluation.notes.join("\n")).not.toMatch(/already counted/);
+  });
+
+  it("catalog evidence may carry rawValidity {}", () => {
+    const snap = catalogSnapshot();
+    const evidence: Evidence = offer(snap, KC0).evidence[0]!;
+    expect(evidence.rawValidity).toEqual({});
+    expect(exclusion(snap, KC0)).toBe("");
+  });
+});
+
+describe("storeAttestationFor (amendment section 3)", () => {
+  const store: StoreAttestation = {
+    family: "kroger", provider: "kroger-api", storeId: SCOPE, checkedAt: "2026-09-24T12:00:00.000Z",
+    applicability: "verified", applicabilityEvidence: "synthetic: store page matches the Location API name and address",
+  };
+  const file: ValidationFile = { schemaVersion: 1, attestations: [], storeAttestations: [store], validations: [], pairs: [] };
+  const none = { applicability: "unknown", attestation: null };
+
+  it("defaults to unknown without a file, without storeAttestations or without an exact match", () => {
+    expect(storeAttestationFor(null, "kroger", "kroger-api", SCOPE)).toMatchObject(none);
+    expect(storeAttestationFor({ schemaVersion: 1, attestations: [], validations: [], pairs: [] }, "kroger", "kroger-api", SCOPE)).toMatchObject(none);
+    expect(storeAttestationFor(file, "kroger", "kroger-api", OTHER_SCOPE)).toMatchObject(none);
+    expect(storeAttestationFor(file, "kroger", "safeway-search", SCOPE)).toMatchObject(none);
+    expect(storeAttestationFor(file, "albertsons", "kroger-api", SCOPE)).toMatchObject(none);
+  });
+
+  it("verifies an exactly matching, well-formed attestation", () => {
+    expect(storeAttestationFor(file, "kroger", "kroger-api", SCOPE)).toEqual({ applicability: "verified", attestation: store, problems: [] });
+    const safeway: StoreAttestation = { ...store, family: "albertsons", provider: "safeway-search", storeId: "9200" };
+    expect(storeAttestationFor({ ...file, storeAttestations: [safeway] }, "albertsons", "safeway-search", "9200"))
+      .toEqual({ applicability: "verified", attestation: safeway, problems: [] });
+  });
+
+  it("any invalid matching entry makes the store unknown, even beside a valid one", () => {
+    const bad = { ...store, applicabilityEvidence: "" };
+    for (const storeAttestations of [[store, bad], [bad, store]]) {
+      const result = storeAttestationFor({ ...file, storeAttestations }, "kroger", "kroger-api", SCOPE);
+      expect(result).toMatchObject(none);
+      expect(result.problems.join("\n")).toMatch(/applicabilityEvidence/);
+    }
+    const otherStore = { ...bad, storeId: OTHER_SCOPE };
+    expect(storeAttestationFor({ ...file, storeAttestations: [store, otherStore] }, "kroger", "kroger-api", SCOPE)).toMatchObject({ applicability: "verified" });
+  });
+
+  it("ignores malformed entries and a malformed list without throwing", () => {
+    const storeAttestations = [null, "x", store] as unknown as StoreAttestation[];
+    expect(storeAttestationFor({ ...file, storeAttestations }, "kroger", "kroger-api", SCOPE)).toMatchObject({ applicability: "verified" });
+    const notAList = { ...file, storeAttestations: "x" } as unknown as ValidationFile;
+    expect(storeAttestationFor(notAList, "kroger", "kroger-api", SCOPE)).toMatchObject(none);
+  });
+
+  it.each([
+    ["a non-strict checkedAt", { checkedAt: "1" }, /checkedAt/],
+    ["an unparseable checkedAt", { checkedAt: "yesterday" }, /checkedAt/],
+    ["empty applicability evidence", { applicabilityEvidence: " " }, /applicabilityEvidence/],
+    ["a missing applicability evidence", { applicabilityEvidence: undefined }, /applicabilityEvidence/],
+    ["an applicability other than verified", { applicability: "unknown" }, /applicability must be verified/],
+  ])("rejects %s", (_label, change, problem) => {
+    const bad = { ...store, ...change } as StoreAttestation;
+    const result = storeAttestationFor({ ...file, storeAttestations: [bad] }, "kroger", "kroger-api", SCOPE);
+    expect(result).toMatchObject(none);
+    expect(result.problems.join("\n")).toMatch(problem);
+  });
+
+  it("a kroger-api storeId must be an 8-digit locationId", () => {
+    for (const storeId of ["9100001", "910000010", "9100000a", ""]) {
+      const result = storeAttestationFor({ ...file, storeAttestations: [{ ...store, storeId }] }, "kroger", "kroger-api", storeId);
+      expect(result).toMatchObject(none);
+      expect(result.problems.join("\n")).toMatch(/8-digit/);
+    }
+  });
+
+  it("a safeway-search storeId must be non-empty", () => {
+    const safeway: StoreAttestation = { ...store, family: "albertsons", provider: "safeway-search", storeId: " " };
+    const result = storeAttestationFor({ ...file, storeAttestations: [safeway] }, "albertsons", "safeway-search", " ");
+    expect(result).toMatchObject(none);
+    expect(result.problems.join("\n")).toMatch(/storeId/);
+  });
+
+  it("a provider attested for the wrong family is never verified", () => {
+    const wrong: StoreAttestation[] = [
+      { ...store, family: "albertsons" },
+      { ...store, provider: "safeway-search", storeId: "9200" },
+    ];
+    expect(storeAttestationFor({ ...file, storeAttestations: [wrong[0]!] }, "albertsons", "kroger-api", SCOPE).problems.join("\n"))
+      .toMatch(/provider kroger-api is allowed only for family kroger/);
+    expect(storeAttestationFor({ ...file, storeAttestations: [wrong[1]!] }, "kroger", "safeway-search", "9200").problems.join("\n"))
+      .toMatch(/provider safeway-search is allowed only for family albertsons/);
+    for (const [entry, family] of [[wrong[0]!, "albertsons"], [wrong[1]!, "kroger"]] as const) {
+      expect(storeAttestationFor({ ...file, storeAttestations: [entry] }, family, entry.provider, entry.storeId)).toMatchObject(none);
+    }
+  });
+});
+
 describe("attestationFor (R8/R9, amended)", () => {
   const attestation: FlyerAttestation = {
     family: "albertsons", flyerId: 8139228, checkedAt: "2026-09-24T12:00:00.000Z",
@@ -671,9 +1039,21 @@ describe("attestationFor (R8/R9, amended)", () => {
 describe("assembleProof (synthetic)", () => {
   it("builds an empty proof without a validation file", () => {
     const snap = snapshot();
-    const result = assembleProof(null, snap.offers, ["kroger", "albertsons"], "2026-09-24T13:00:00.000Z");
-    expect(result.proof).toEqual({ validatedAt: "2026-09-24T13:00:00.000Z", families: ["kroger", "albertsons"], validations: [], pairs: [] });
+    const result = assembleProof(null, snap.offers, ["kroger", "albertsons"], "2026-09-24T13:00:00.000Z", "in-store-ad");
+    expect(result.proof).toEqual({ validatedAt: "2026-09-24T13:00:00.000Z", families: ["kroger", "albertsons"], channel: "in-store-ad", validations: [], pairs: [] });
     expect(checkProof({ ...snap, proof: result.proof }, NOW).ok).toBe(false);
+  });
+
+  it("carries the gate channel it is given (proof.channel, amendment D2)", () => {
+    const snap = snapshot();
+    const file: ValidationFile = { schemaVersion: 1, attestations: [], validations: snap.proof.validations, pairs: snap.proof.pairs };
+    const pickup = assembleProof(file, snap.offers, ["kroger", "albertsons"], "2026-09-24T13:00:00.000Z", "retailer-pickup");
+    expect(pickup.proof.channel).toBe("retailer-pickup");
+    // The ad offers are then outside the gate channel, so nothing counts.
+    expect(checkProof({ ...snap, proof: pickup.proof }, NOW).ok).toBe(false);
+    const ad = assembleProof(file, snap.offers, ["kroger", "albertsons"], "2026-09-24T13:00:00.000Z", "in-store-ad");
+    expect(ad.proof.channel).toBe("in-store-ad");
+    expect(checkProof({ ...snap, proof: ad.proof }, NOW).ok).toBe(true);
   });
 
   it("keeps entries for collected offers and notes the rest", () => {
@@ -683,7 +1063,7 @@ describe("assembleProof (synthetic)", () => {
       validations: [...snap.proof.validations, { ...snap.proof.validations[0]!, offerId: "flipp:kroger:9199999998" }],
       pairs: [...snap.proof.pairs, { leftId: "flipp:kroger:9199999998", rightId: A0, category: "produce" }],
     };
-    const result = assembleProof(file, snap.offers, ["kroger", "albertsons"], "2026-09-24T13:00:00.000Z");
+    const result = assembleProof(file, snap.offers, ["kroger", "albertsons"], "2026-09-24T13:00:00.000Z", "in-store-ad");
     expect(result.proof.validations).toHaveLength(20);
     expect(result.proof.pairs).toEqual(snap.proof.pairs);
     expect(result.notes.join("\n")).toMatch(/flipp:kroger:9199999998/);

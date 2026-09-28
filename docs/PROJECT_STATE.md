@@ -11,21 +11,22 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 - **Milestone:** M1 - Trustworthy local deals in a Windows window.
 - **Active plan:** [M1 implementation plan](plans/active/2026-09-19-m1-windows-deal-comparison.md). Its 2026-09-24 addendum R1-R12 and amendments A1-A14 are binding.
 - **Status:**
-  - Task 1 code is complete and has been through two rounds of independent spec and quality review, each followed by fixes. A final re-review of ea20708 is in progress.
+  - Task 1 code has been through repeated independent spec and quality reviews, each followed by fixes. Since DEC-20260924-004, only realistic fail-open paths block. The spec pass on 5a4d590 found no blockers; b355b14 closed the quality pass's one remaining blocker and is under quality re-review.
   - **The live source-proof gate is BLOCKED** ([M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md)).
   - Per the plan's stop condition, Tasks 2-4 wait.
 - **Blocking decision for the user:** how to get comparable competitor prices. Weekly ads alone give 0 cross-chain pairs this week, even with relaxed identity defaults. The recommended option is catalog prices: the Kroger Public API (needs the user's developer credentials) plus a Safeway product-search probe. That changes the gate's channel design, so it needs user approval.
 
-## Last verified state (2026-09-24)
+## Last verified state (2026-09-28)
 
-- Branch `claude/loving-ptolemy-6dkn4y`. HEAD includes ea20708 (code) and later docs commits.
-- `npm ci`, `npm test` (562/562), `npm run typecheck` and `npm run lint` all pass on Node 22.22.2 (Linux).
+- Branch `claude/loving-ptolemy-6dkn4y`. HEAD includes b355b14 (code) and later docs commits.
+- `npm ci`, `npm test` (590/590), `npm run typecheck` and `npm run lint` all pass on Node 22.22.2 (Linux).
 - The live `npm run source:collect -- --postal-code 98105 --validations docs/research/M1_SOURCE_VALIDATIONS_2026-09-24.json` exits 1 (BLOCKED):
   - 43/43 live requests accepted;
   - 39 produce/meat offers normalized;
   - 0 qualifying offers per chain, 0 pairs.
 - Safeway store 2980 applicability and printed calendar are attested. One hash-bound validation (Gala Apples) is accepted. QFC is unattested because qfc.com rejects this host.
 - No UI, installer, database, hosting, notifications, accounts, credentials or paid services exist.
+- The current weekly ads (QFC 8132234, Safeway 8139228) expire after 2026-09-29. Any later gate run needs the next week's flyers and a fresh Safeway attestation; the QFC attestation is still missing.
 
 ## Next action
 

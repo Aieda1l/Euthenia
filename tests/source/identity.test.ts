@@ -752,6 +752,7 @@ describe("final spec/quality notes: description alternatives fail closed", () =>
     ["Fresh Boneless Skinless Chicken Thighs", "Great for grilling or baking"],
     ["Fresh Boneless Beef New York Strip Steaks", "Great for grilling or broiling"],
   ])("meat %j with the description %j never keys", (name, description) => {
+    expect(comparisonKey(meat(name))).not.toBeNull();
     expect(comparisonKey(meat(name, description))).toBeNull();
   });
 

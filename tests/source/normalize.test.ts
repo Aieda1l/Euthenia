@@ -739,18 +739,41 @@ describe("5a4d590 review notes: fractions, hyphenated counts and package totals"
   it("a hyphenated count on an each-priced item blocks the each price", () => {
     const offer = normalize(synthetic({ name: "Organic Romaine Hearts", description: "3-Ct.", price_text: "ea" }));
     expect(offer.unitPrice).toBeNull();
-    expect(offer.normalizationIssue).not.toBeNull();
+    expect(offer.normalizationIssue).toMatch(/count/);
   });
 
   it("a hyphenated package total that contradicts the per-lb price blocks the unit price", () => {
     const offer = normalize(synthetic({ description: "3-lb. Pkg for $14.97", price_text: "lb", current_price: "2.99" }));
     expect(offer.unitPrice).toBeNull();
-    expect(offer.normalizationIssue).not.toBeNull();
+    expect(offer.normalizationIssue).toMatch(/contradict/);
   });
 
   it("a consistent hyphenated package total is accepted like the spaced form", () => {
     const offer = normalize(synthetic({ description: "3-lb. Pkg for $8.97", price_text: "lb", current_price: "2.99" }));
     expect(offer.unitPrice).toEqual({ basis: "lb", cents: { n: "299", d: "1" } });
     expect(offer.packageTotalCents).toBe(897);
+    expect(offer.packageMassLb).toEqual({ n: "3", d: "1" });
+    expect(offer.conditions.complete).toBe(true);
+  });
+
+  it.each(["2-3-lb Pkg for $8.97", "2-3 lb Pkg for $8.97"])(
+    "a size range before a package total (%j) never yields clean package terms",
+    (description) => {
+      const offer = normalize(synthetic({ description, price_text: "lb", current_price: "2.99" }));
+      expect(offer.unitPrice).toBeNull();
+      expect(offer.packageMassLb).toBeNull();
+      expect(offer.packageTotalCents).toBeNull();
+      expect(offer.normalizationIssue).not.toBeNull();
+    },
+  );
+
+  it("a fractional size (\"1 1/2 lb Pkg for $4.49\") is never read as a whole-pound package", () => {
+    const offer = normalize(synthetic({ description: "1 1/2 lb Pkg for $4.49", price_text: "lb", current_price: "2.99" }));
+    // The per-lb price is explicit in the price text; the package stays unknown
+    // and the unparsed "$4.49" keeps the conditions incomplete.
+    expect(offer.unitPrice).toEqual({ basis: "lb", cents: { n: "299", d: "1" } });
+    expect(offer.packageMassLb).toBeNull();
+    expect(offer.packageTotalCents).toBeNull();
+    expect(offer.conditions.complete).toBe(false);
   });
 });

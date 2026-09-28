@@ -118,15 +118,17 @@ const MULTI_LB_FOR = /\b\d+(?:\.\d+)? ?(?:lbs?|pounds?) for\b/;
 const LB_PACKAGE_ONLY = /^\s*((?:0|[1-9]\d*)(?:\.\d+)?)[\s-]*lbs?\.?\s+package\s*$/i;
 // N4/B2: the amount may not continue with a digit or with "." and a digit, so
 // "$14.975" never parses as $14 or $14.97, while a sentence-final "$8.97." does.
+// A package total never starts right after "-", "/" or a fraction slash, so a
+// size range ("2-3 lb") or a fraction ("1 1/2 lb") is never read as one size.
 // F1: only package words and punctuation may stand between the mass and "for
 // $X" ("3 lb Twin Pack Brick for $14.97", "3 lb Package\nfor $23.97"). Any
 // other text there (card, limit, coupon or member wording, "avg.", another
 // "N lb") means no package total, so that text stays in the condition scan.
 const PACKAGE_WORD = String.raw`(?:twin\s+packs?|packages?|pkgs?|packs?|bricks?)\b[\s.,-]*`;
 const PACKAGE_TOTAL = new RegExp(
-  String.raw`(?<![\d.])((?:0|[1-9]\d*)(?:\.\d+)?)[\s-]*lbs?\b[\s.,-]*(?:${PACKAGE_WORD}){0,2}\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)`,
+  String.raw`(?<![\d./\u2044-])((?:0|[1-9]\d*)(?:\.\d+)?)[\s-]*lbs?\b[\s.,-]*(?:${PACKAGE_WORD}){0,2}\bfor\s*\$\s*((?:0|[1-9]\d*)(?:\.\d{1,2})?)(?!\d|\.\d)`,
   "gi");
-const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?\s*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
+const LEADING_ZERO_QUANTITY = /(?<![\d.])0\d+(?:\.\d+)?[\s-]*(?:lbs?|pounds?|oz|ounces?|kg|ct|count|for)\b/;
 const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bpints?\b/, "pint"],
   [/\bquarts?\b/, "quart"],
@@ -134,7 +136,7 @@ const UNSUPPORTED_UNITS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bbags?\b/, "bag"],
   [/\b(?:clamshells?|containers?|baskets?|box|boxes)\b/, "container"],
 ];
-const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?\s*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
+const SIZE_RANGE = /\d+(?:\.\d+)?\s*(?:-|\u2013|to)\s*\d+(?:\.\d+)?[\s-]*(?:lbs?|oz|ounces?|ct|count|pounds?)\b/;
 // Mass units shared by the stated-mass scan and the weight guards below.
 const MASS_UNIT = String.raw`(?:oz|ounces?|lbs?|pounds?|kg|g|grams?)`;
 // Hyphenated sizes and counts ("1-lb.", "16-oz.", "3-Ct.") count too.

@@ -561,3 +561,155 @@ These amendments are binding and are all stricter than before (DEC-20260924-003)
 - **A12 - R11, deferral stops all traffic.** Once any request is deferred, no request of any kind (new, retry or redirect hop) may be sent in that run. A run-wide abort signal enforces this.
 - **A13 - R3, description alternatives fail closed** (after the ea20708 reviews). Any alternation in the item description (or, and, &, +, a slash between words, including "mix & match") makes kind, variety, species and cut `unknown`, whatever words it names. Vocabulary-based detection missed alternatives outside the vocabulary ("or Organic Mandarins", "or Baby Peeled"). Prose such as "great for grilling or broiling" loses coverage; that is the accepted cost.
 - **A14 - R6, weights are not unit counts; more condition wording.** "Limit 10 lbs" or "when you buy 3 lbs" must not set `maximumUnits`/`minimumUnits`; the text stays unrecognized, so `complete` is false. "Club", "membership" and "for U" are condition indicators. Hyphenated sizes ("1-lb.", "16-oz.") count as stated masses. "First cut" and "second cut" are cut-part residue. Extended 2026-09-28 after the 5a4d590 reviews: "1st/2nd cut" are residue too; a limit or minimum followed by a decimal or fraction ("2.5 lbs", "2 1/2 lbs", "2½ lbs") is not a unit count; hyphenated counts ("3-Ct.") and hyphenated package totals ("3-lb. Pkg for $X") are parsed like the spaced forms.
+
+## Catalog price amendment - DRAFT pending user approval (2026-09-28)
+
+**Status:** Draft. Nothing here is approved or implemented. Implementation starts only after the user answers D1-D7 in section 8. Basis: DEC-20260928-001, the [catalog probe](../../research/M1_CATALOG_PROBE_2026-09-28.md) and the [blocked gate](../../research/M1_SOURCE_PROOF.md). Every existing gate rule stands unless a numbered decision changes it.
+
+### 1. Scope and outcome
+
+- **One channel context.** The gate evaluates exactly one channel, named in a new `proof.channel` (D2): the catalog channel (D1). Per chain it needs 10 distinct validated catalog products from **one** store, covering produce and meat, plus 5 cross-chain pairs in that channel (at least 1 produce and 1 meat). Counts never add across channels.
+- **Stores.** QFC University Village: Kroger `locationId` 70500807 (division 705 + store 00807), confirmed by the Location API response, not assumed. Safeway U District: store 2980, already attested for the weekly ad.
+- **Weekly-ad offers** are still collected, normalized and reported in `in-store-ad`, but they do **not** count toward this gate. Each is excluded as "channel in-store-ad is not the gate channel". They are never paired with, or rated against, catalog prices.
+- **Unchanged:** 10 per chain with both categories; 5 pairs covering both categories, each with the same key, channel and unit basis; per-offer human validation bound to raw hashes; fail-closed parsing; 24 h freshness; a snapshot only on PASS.
+
+### 2. Channel decision (D1)
+
+What we know: the Kroger API has no mode parameter, and its price is scoped only by `filter.locationId`. qfc.com shows In-store, Pickup and Delivery modes. Safeway's search takes `channel=instore` or a pickup value. Neither source is verified to equal the shelf price.
+
+- **A (recommended):** both map to the existing `retailer-pickup`. Safeway is queried with its pickup value (confirmed in S0). The human confirms each validated price on the retailer site with that store in Pickup mode; `channel` is already a required verified field. This needs no Channel change and matches DEC-20260928-001 ("online pickup/delivery prices").
+- **B:** a new Channel, `in-store-catalog`: the retailer's own site or API price for in-store shopping at that store. Safeway uses `channel=instore`, and the human checks In-store mode. It is closer to how the user shops, but it edits the approved channel list and assumes the Kroger API returns in-store prices.
+- **Not recommended:** a neutral `retailer-catalog` with no mode, because it cannot be checked against any specific page mode.
+- **Under any option,** a price that doesn't match the site in the chosen mode is not validated. If S0 finds that Safeway's two modes price differently, that is recorded as evidence.
+
+### 3. Contract changes
+
+The plan's "Shared contracts" block and `contracts.ts` change together.
+
+```ts
+// Evidence
+provider: "flipp" | "pcc" | "kroger-api" | "safeway-search";
+// Offer
+calendarRule: "verified-local-date" | "explicit-instant" | "catalog-observation" | "unknown";
+// Proof gains one field
+channel: Channel;
+// New. ValidationFile gains storeAttestations?: StoreAttestation[] (absent = none)
+export interface StoreAttestation {
+  family: Family; provider: "kroger-api" | "safeway-search"; storeId: string;
+  checkedAt: string; applicability: "verified"; applicabilityEvidence: string;
+}
+// Option B only: Channel gains "in-store-catalog".
+```
+
+- **No new Offer fields.** `schemaVersion` stays 1, because no snapshot has ever been written.
+- **Price (D3).** `unitPrice` comes from the structured regular price only. `regular`, `promo`, `size`, `soldBy` and the per-unit estimates are kept verbatim in `rawPrice`; estimates never become `unitPrice`. Regular-price conditions are `complete: true`, loyalty and coupon `false`, and no limits. The regular field is by definition the no-promotion price, and the human confirms it because `conditions` is a verified field. Promo is shown as raw data only.
+- **`catalog-observation`.** `startsAt` and `expiresAt` are null, and freshness comes from `observedAt` alone; `freshness()` already supports this (older than 24 h is stale). The collector sets the rule for catalog providers. It claims no validity window, so it needs no calendar attestation. Catalog `applicability` is `verified` only when a valid StoreAttestation exists for that provider and storeId **and** this run's store lookup returned that ID (the R8 analogue). R8 and A8 are unchanged for Flipp.
+- **IDs (the R7/A7 analogue).** `Offer.id` = `<provider>:<family>:<sourceItemId>`. `Evidence.id` = `<provider>:product:<sourceItemId>:<hash12>`. `rawSha256` hashes the exact search-response bytes, so several offers may share one hash. `rawValidity` = `{}`. `retrievedUrl` is the exact request URL and never holds a credential. `sourceUrl` is the retailer product page from the response, otherwise `retrievedUrl`.
+- **`evaluateProof`/`checkProof` (R10).** These changes only add exclusions:
+  1. An offer outside `proof.channel` is excluded. A missing or unknown `proof.channel` is a gate failure.
+  2. Providers. `flipp` keeps A7 exactly. `kroger-api` is allowed only for family `kroger`, with a 13-digit `sourceItemId` (`/^\d{13}$/`) and a `retrievedUrl` of `https://api.kroger.com/v1/products?...` carrying an 8-digit `filter.locationId`. `safeway-search` is allowed only for `albertsons`, with its pattern set in S1. Any other provider is excluded. This relaxes A7's "flipp only" clause for these two providers only.
+  3. Catalog providers require `catalog-observation` with both dates null. Flipp may not use that rule.
+  4. A family's counted catalog offers share one store scope (`filter.locationId`/`storeid` in `retrievedUrl`).
+  5. Counts and used items are keyed by `<provider>:<sourceItemId>`, so IDs never collide across providers.
+
+### 4. Human validation (R9) for catalog offers
+
+- **Store attestation.** Once per store, before the collection run, the user adds a StoreAttestation on their PC (qfc.com is blocked from the cloud host). For QFC it confirms that qfc.com's page for 70500807 matches the Location API's name and address. For Safeway it makes the same check for store 2980.
+- **Offer validation.** For each chosen offer, within 24 h of `observedAt`:
+  1. Open the retailer's product page in the browser, with that store and the D1 mode selected.
+  2. Confirm every `REQUIRED_VERIFIED_FIELDS` entry: identity (variety, organic, cut, bone, skin, fresh/frozen, fat); regular price and basis; package terms; no condition on the regular price; mode and store; no validity window.
+  3. Set `evidenceIds` to the hash-bound ID from the report, and `calendarEvidence` to "catalog price; no stated window; observed <observedAt>".
+
+  If any field disagrees, do not validate the offer. Record the disagreement as a normalizer bug and fix it before PASS.
+- **Binding.** Whole-response bytes will drift between runs (stock, ordering). The gate therefore evaluates the recorded run with `--replay` (G1) instead of fetching again, which keeps the hash binding exact.
+- **Sampling (D5).** Validate only the floor: at least 10 per chain with both categories. The 10 pair sides fall within those 20. Unvalidated catalog offers are reported but never counted. That is today's rule; nothing is relaxed. Whether Task 2 may rate unvalidated catalog offers is left to Task 2 (DEC-20260924-004).
+
+### 5. Tasks
+
+All tasks use injected fetchers and fake clocks only. Verify each task with `npm run test:source && npm run typecheck && npm run lint`, then fresh spec and quality reviews. No provider framework and no runtime dependencies.
+
+- **C0 - Contracts and proof.**
+  - **Files:** `src/shared/contracts.ts`; `src/source/proof.ts` (the section 3 changes, `storeAttestationFor`, `assembleProof(..., channel)`); `src/source/collect.ts` (`parseValidationFile` only, and `assembleProof` with the interim channel `in-store-ad`); `tests/source/{proof,collect}.test.ts`.
+  - **Accept:**
+    - 10+10 catalog offers with 5 pairs: PASS. 5 ad + 5 catalog offers per chain: FAIL.
+    - Excluded with a reason: a catalog offer with dates; Flipp with `catalog-observation`; `kroger-api` on `albertsons`; two locationIds in one family; an offer outside `proof.channel`.
+    - A 13-digit ID with leading zeros counts, and the existing tests pass.
+- **C1 - Allowlisted client.**
+  - **Files:** `src/source/flipp.ts` and `tests/source/flipp.test.ts` (not renamed).
+  - **Changes:** the host set becomes {`backflipp.wishabi.com`, `api.kroger.com`}. A redirect must stay on the request's host. Optional `FetchOptions.headers` are passed to the fetcher and never recorded in attempts, errors or audit.
+  - **Accept:** a cross-host redirect is rejected; header values never appear in `FlippAttempt` or error text; existing tests pass.
+- **S0 - Safeway feasibility probe (runs on the user's PC).**
+  - **Files:** `scripts/probe-safeway.ts` and `tests/source/probe-safeway.test.ts`, both new. Main runs only when the script is executed directly. It uses Node fetch against `https://www.safeway.com` only; another host named in the config is reported, not requested.
+  - **Steps:**
+    1. GET `/weeklyad`. Extract the search path, endpoint and key by their exact config names.
+    2. Send 3 fixed queries to store 2980 in both modes, with the key in a header.
+    3. Print only: statuses, timings, counts, field names, one product's ID/price/size/unit fields, whether the modes' prices differ, and `keyFound`/`keyLength`.
+    4. Save the search bodies to `data/audit/safeway-probe-<ts>/`, never the weekly-ad HTML. Fail the self-check if the key appears in any output.
+  - **User:** runs `npm ci; npx tsx scripts/probe-safeway.ts` and pastes stdout.
+  - **Feasible means:** HTTP 200 JSON with store-scoped prices for at least 2 of 3 queries in the D1 mode, from plain Node fetch with the key sent in a header. Anything else triggers the D6 fallback.
+- **K1 - Kroger client and normalizer (after C0 and C1).**
+  - **Files:** `src/source/kroger.ts`; `src/source/catalogQueries.ts` (one fixed, commented list shared by both chains, about 20 produce terms and 15 meat terms); `tests/source/kroger.test.ts`; `tests/fixtures/kroger/*.json`.
+  - **Token.** `krogerToken(env, fetcher)` POSTs `https://api.kroger.com/v1/connect/oauth2/token` with Basic auth and `grant_type=client_credentials&scope=product.compact`. It reads `KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET` at call time. The token stays in memory only and is not audited. Errors carry the status only. No redirects and no refresh; a mid-run 401 is a run error.
+  - **Location.** `GET /v1/locations/70500807` must return that ID with chain QFC.
+  - **Products.** `GET /v1/products?filter.term=<q>&filter.locationId=70500807&filter.limit=20` for each query. Dedupe by productId: the first wins, with a note.
+  - **`normalizeKroger`:**
+    - Category comes from `classifyText(description)`, and the API's `categories` must be present and agree. Identity comes from `deriveIdentity` plus the D4 overrides; a conflict gives unknown.
+    - Exactly one `items[]` entry, with a positive `price.regular` of at most 2 decimals. The unit basis comes only from documented patterns:
+      - WEIGHT priced per lb gives lb;
+      - UNIT with "N lb/oz" gives lb via the package;
+      - "N ct" or each gives each;
+      - anything else gives a null `unitPrice` with an issue.
+  - **Fixtures:** loose PLU 4133, organic 94133, a 3 lb bag, 80/20 ground beef, frozen chicken, no price, multiple items, a category conflict. Also check that the secret never appears in a thrown error.
+- **K2 - Collector wiring for Kroger (after K1).**
+  - **Files:** `collect.ts` and its test.
+  - **Flow:** after Flipp, request the token, then the location (audited), then the products (audited as `kroger-products-<n>.json`). `proof.channel` becomes the D1 channel, so Flipp-only PASS tests become BLOCKED.
+  - **Errors:** missing credentials exit 2 before any request. All queries empty is a source error, also exit 2.
+  - **Tests:** grep the whole audit for the secret and the token. A 401 exits 2.
+- **G1 - Replay (after K2; also edits `collect.ts`).**
+  - **Where:** `--replay <run-id>` in `parseCollectArgs` and `scripts/collect.ts`.
+  - **Behavior:** no network. It loads `data/audit/<run-id>/diagnostics.json` (`candidateSnapshot`). It re-hashes each evidence's raw file and checks it against `rawSha256` and `requests[].sha256`; a mismatch exits 2. It applies only `validations` and `pairs`, since attestations must come before collection. It evaluates at the real clock, writes a new audit, and writes the snapshot only on PASS.
+  - **Tests:** tampering exits 2; more than 24 h gives stale BLOCKED; PASS writes the snapshot; the fetcher is called 0 times.
+- **K3 - Live Kroger check (orchestrator, in the cloud once credentials exist; after K2).** Expect BLOCKED, with Safeway at 0. Record Kroger counts per category (offers with a key and a unit price), the request count and any 429. Commit 3-6 real product fixtures, and correct the K1 unit rules and D4 rules against them, with a fresh review.
+- **S1 - Safeway client and normalizer (only if S0 is feasible; after C0 and C1).**
+  - **Files:** `src/source/safeway.ts` with its tests and fixtures; the S0 host added to `flipp.ts`; the rule-2 pattern added to `proof.ts` and its test.
+  - **Key (D6):** discovered at runtime from the weekly-ad page, kept in memory, and sent only as a header. It never appears in a URL, log, error or audit; for that page only the URL, status and sha256 are recorded. Normalization mirrors K1, using the structured fields found in S0.
+- **S2 - Collector wiring for Safeway (after S1 and G1).** `collect.ts` queries store 2980 with the same `CATALOG_QUERIES`. Accept: an injected-fetcher PASS with 10+10 validated offers and 5 pairs, and no key in the audit.
+- **L1 - Live gate (user's PC, plus orchestrator).**
+  1. Set the credentials as PowerShell session variables (never in files) and write the StoreAttestations.
+  2. Run `npm run source:collect -- --postal-code 98105 --validations <f>`. Expect BLOCKED, with candidates listed.
+  3. Validate the floor within 24 h, then run with `--replay <run-id>`.
+  4. Commit the validation file under `docs/research/` and update `M1_SOURCE_PROOF.md` truthfully.
+  5. The orchestrator adds a DEC entry and syncs the Shared contracts block, ARCHITECTURE, TEST_PLAN, GAP_ANALYSIS and PROJECT_STATE.
+
+### 6. Order, parallelism and edit conflicts
+
+- **Wave 1 (parallel):** C0, C1 and S0. Their files don't overlap.
+- **Then in order:** K1, then K2, then G1. K2 and G1 both edit `collect.ts`.
+- **K3 alongside S1.** K3 touches `kroger.ts` and its fixtures. S1 touches `safeway.ts`, `flipp.ts` and `proof.ts`.
+- **Finally:** S2, then L1.
+- **Hotspots:** `collect.ts` (C0, K2, G1, S2) and `proof.ts` (C0, S1) are always edited in series. `contracts.ts` changes only in C0.
+- **External blockers:** Kroger credentials (K3, L1), the S0 result (S1, S2), and the user's PC (S0, L1).
+
+### 7. Risks
+
+- **Terms.** Kroger's developer terms (retention, display, committed fixtures) are unverified; the user reads them when registering. Safeway's endpoint is undocumented, and calling it with a web client's key is likely outside the site's terms. Bot protection may block even the PC. Raw bodies stay in the ignored `data/audit/`.
+- **Rate limits.** About 37 Kroger calls per run, against published daily limits of 10,000 product and 1,600 location calls (unverified). Safeway's limits are unknown; about 35 calls per run. The process-wide concurrency stays at 2, runs are manual only, and the existing Retry-After and deferral rules apply.
+- **Blocked hosts.** Safeway and qfc.com are blocked from the cloud host, so the gate runs on the user's PC. The M3 hosted collector could not collect Safeway either; that is a later decision.
+- **Catalog vs shelf.** These are the retailer's online prices for the store and mode, labeled as such and never presented as shelf prices. Validation checks the website, not the shelf.
+- **Channel ambiguity.** A Kroger price that matches no single mode is not validated. If that happens systematically, revisit D1.
+- **Coverage.** Without D4, R4 likely leaves conventional produce and unlabeled meat unkeyed, so near zero offers qualify. Brand prefixes or "®" can trip A2's head-noun rule, which fails closed; if K3 shows this dominates, a narrow vocabulary fix will be proposed separately. Doing 20 checks within 24 h is tight.
+- **Secrets.** Credentials live in the environment only. Tests grep audits, reports and errors for them.
+- **If Safeway is infeasible** (options, not commitments):
+  - **(a) Instacart for both chains**, in one Instacart channel. Accurate scraping is allowed, and both families would share a channel. It needs a verified store, mode and location in the session, and it carries markup and bot risk. Kroger API prices could not be paired with it.
+  - **(b) Another independent chain** near UW with a store-scoped catalog, such as Target U District, Whole Foods Roosevelt or Trader Joe's. This needs a new `Family` value and a probe.
+  - **(c) Keep M1 open.**
+
+### 8. User decisions required
+
+1. **D1 channel:** A, `retailer-pickup` for both (recommended), or B, a new `in-store-catalog`.
+2. **D2 gate scope:** the gate counts only `proof.channel`. Weekly-ad offers stay collected and displayed but outside the gate (recommended).
+3. **D3 price:** `unitPrice` comes from the regular price only. Promo is kept raw and unrated in M1 (recommended).
+4. **D4 structured identity** (recommended): the loose-produce PLU sets organic status (a 4-digit code in 3000-4999 is conventional; a 9-prefixed code is organic). Kroger's `temperature` sets fresh/frozen for meat (Refrigerated is fresh; Frozen is frozen). Explicit text wins, and a conflict makes the field unknown. Both are confirmed on real fixtures first. Safeway gets them only if S0 shows equivalent fields.
+5. **D5 validation:** validate only the gate floor (at least 10 per chain, including the 5 pairs' sides), within 24 h, evaluated by replay.
+6. **D6 Safeway:** approve running the S0 probe on your PC. If it is feasible, approve runtime key discovery (the key is never stored) and accept the terms and fragility risks. If it is not, choose a fallback from section 7.
+7. **D7 runs and credentials:** register a Kroger developer app with Product and Location access. Put the credentials in the cloud environment settings for development, and in PowerShell session variables on your PC for the gate run. Confirm the stores: QFC University Village (70500807) and Safeway U District (2980).

@@ -30,7 +30,7 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 
 ## Next action
 
-1. **Waiting on the user:** the source-strategy decision ([M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md), "What would unblock M1").
+1. **Waiting on the user:** the user chose catalog prices (DEC-20260928-001). The drafted "Catalog price amendment" in the active plan needs answers to its decisions D1-D7. Kroger developer credentials (`KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET` in environment settings) are needed for K3 and L1.
 2. After the decision, amend the plan for the chosen sources (for example a Kroger API client and credentials setup, and a Safeway product-search probe) and re-run Task 1's gate. Then Tasks 2-4.
 
 Do not start Tasks 3-4 before the gate can pass. Do not weaken the gate without the user.

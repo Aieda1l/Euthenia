@@ -11,15 +11,15 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 - **Milestone:** M1 - Trustworthy local deals in a Windows window.
 - **Active plan:** [M1 implementation plan](plans/active/2026-09-19-m1-windows-deal-comparison.md). Its 2026-09-24 addendum R1-R12 and amendments A1-A14 are binding.
 - **Status:**
-  - Task 1 code has been through repeated independent spec and quality reviews, each followed by fixes. Since DEC-20260924-004, only realistic fail-open paths block. The spec pass on 5a4d590 found no blockers; b355b14 closed the quality pass's one remaining blocker and is under quality re-review.
+  - **Task 1 code review is closed.** Independent spec and quality reviews ran after every fix round. Under DEC-20260924-004 (only realistic fail-open paths block), the final passes, spec on 5a4d590 and quality on b355b14, have no blocking findings. 8da5045 applied the last non-blocking note.
   - **The live source-proof gate is BLOCKED** ([M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md)).
   - Per the plan's stop condition, Tasks 2-4 wait.
 - **Blocking decision for the user:** how to get comparable competitor prices. Weekly ads alone give 0 cross-chain pairs this week, even with relaxed identity defaults. The recommended option is catalog prices: the Kroger Public API (needs the user's developer credentials) plus a Safeway product-search probe. That changes the gate's channel design, so it needs user approval.
 
 ## Last verified state (2026-09-28)
 
-- Branch `claude/loving-ptolemy-6dkn4y`. HEAD includes b355b14 (code) and later docs commits.
-- `npm ci`, `npm test` (590/590), `npm run typecheck` and `npm run lint` all pass on Node 22.22.2 (Linux).
+- Branch `claude/loving-ptolemy-6dkn4y`. HEAD includes 8da5045 (code) and later docs commits.
+- `npm ci`, `npm test` (593/593), `npm run typecheck` and `npm run lint` all pass on Node 22.22.2 (Linux).
 - The live `npm run source:collect -- --postal-code 98105 --validations docs/research/M1_SOURCE_VALIDATIONS_2026-09-24.json` exits 1 (BLOCKED):
   - 43/43 live requests accepted;
   - 39 produce/meat offers normalized;
@@ -30,9 +30,8 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 
 ## Next action
 
-1. Finish the final Task 1 re-reviews. Fix any blocking finding and re-verify.
-2. Ask the user for the source-strategy decision ([M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md), "What would unblock M1").
-3. After the decision, amend the plan for the chosen sources and continue Task 1's gate, then Tasks 2-4.
+1. **Waiting on the user:** the source-strategy decision ([M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md), "What would unblock M1").
+2. After the decision, amend the plan for the chosen sources (for example a Kroger API client and credentials setup, and a Safeway product-search probe) and re-run Task 1's gate. Then Tasks 2-4.
 
 Do not start Tasks 3-4 before the gate can pass. Do not weaken the gate without the user.
 

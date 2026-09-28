@@ -1,13 +1,13 @@
 # M1 source proof - status: BLOCKED
 
-**Gate result (2026-09-28 20:52Z, code b355b14): BLOCKED, exit 1.** The live run on current ads found 0 qualifying offers per chain and 0 counted pairs. The gate needs 10 per chain and 5 cross-chain pairs. No snapshot was written. Under the plan's stop condition, Task 1 and M1 stay open and dependent UI work (Tasks 3-4) does not start.
+**Gate result (2026-09-28 20:59Z, code 8da5045): BLOCKED, exit 1.** The live run on current ads found 0 qualifying offers per chain and 0 counted pairs. The gate needs 10 per chain and 5 cross-chain pairs. No snapshot was written. Under the plan's stop condition, Task 1 and M1 stay open and dependent UI work (Tasks 3-4) does not start.
 
-Full generated report for this run: [M1_SOURCE_PROOF_RUN_2026-09-28T20-52Z.md](M1_SOURCE_PROOF_RUN_2026-09-28T20-52Z.md). Validation input: [M1_SOURCE_VALIDATIONS_2026-09-24.json](M1_SOURCE_VALIDATIONS_2026-09-24.json). Source evidence: [M1_SOURCE_EVIDENCE_2026-09-24.md](M1_SOURCE_EVIDENCE_2026-09-24.md).
+Full generated report for this run: [M1_SOURCE_PROOF_RUN_2026-09-28T20-59Z.md](M1_SOURCE_PROOF_RUN_2026-09-28T20-59Z.md). Validation input: [M1_SOURCE_VALIDATIONS_2026-09-24.json](M1_SOURCE_VALIDATIONS_2026-09-24.json). Source evidence: [M1_SOURCE_EVIDENCE_2026-09-24.md](M1_SOURCE_EVIDENCE_2026-09-24.md).
 
 ## What ran
 
 - Command: `npm run source:collect -- --postal-code 98105 --validations docs/research/M1_SOURCE_VALIDATIONS_2026-09-24.json`.
-- Collector commit: b355b14. 590/590 unit tests pass, and typecheck and lint are clean. Earlier runs on 2026-09-24 at intermediate commits gave the same counts.
+- Collector commit: 8da5045. 593/593 unit tests pass, and typecheck and lint are clean. Earlier runs on 2026-09-24 at intermediate commits gave the same counts.
 - Requests: 43 live HTTPS requests to `backflipp.wishabi.com`, all accepted. The run used concurrency 2 and allowlisted hosts only.
 - Flyers were selected from the live 98105 listing, not hardcoded:
 

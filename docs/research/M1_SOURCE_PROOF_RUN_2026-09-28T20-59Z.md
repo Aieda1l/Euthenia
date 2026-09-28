@@ -1,9 +1,9 @@
 # M1 source-proof report: BLOCKED
 
 - Status: BLOCKED (exit 1)
-- Run: 2026-09-28T20-52-55-478Z
-- Collection time: 2026-09-28T20:52:55.478Z
-- Gate evaluated at: 2026-09-28T20:52:57.547Z
+- Run: 2026-09-28T20-59-58-676Z
+- Collection time: 2026-09-28T20:59:58.676Z
+- Gate evaluated at: 2026-09-28T21:00:00.630Z
 - Postal code: 98105
 - Responses: live HTTPS responses from backflipp.wishabi.com retrieved by this run (43 accepted of 43 request attempts)
 - Validations file: docs/research/M1_SOURCE_VALIDATIONS_2026-09-24.json

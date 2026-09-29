@@ -1,0 +1,16 @@
+{
+  "_synthetic": "SYNTHETIC fixture for task K1 tests. NOT a real Kroger Location API response: the shape follows public documentation (unverified), and the store name and address are placeholders. K3 replaces or corrects it with a real response.",
+  "data": {
+    "locationId": "70500807",
+    "storeNumber": "00807",
+    "divisionNumber": "705",
+    "chain": "QFC",
+    "name": "SYNTHETIC QFC store name",
+    "address": {
+      "addressLine1": "123 Synthetic Example St",
+      "city": "Seattle",
+      "state": "WA",
+      "zipCode": "98105"
+    }
+  }
+}

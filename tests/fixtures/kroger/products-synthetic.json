@@ -1,0 +1,172 @@
+{
+  "_synthetic": "SYNTHETIC fixture for task K1 tests. NOT a real Kroger Products API response: shapes follow public documentation (unverified), prices are invented, and non-PLU productIds use the reserved synthetic range 9100000000xxx. K3 replaces or corrects it with real responses.",
+  "data": [
+    {
+      "_case": "loose PLU 4133, conventional by D4 (4-digit PLU in 3000-4999); WEIGHT per lb",
+      "productId": "0000000004133",
+      "upc": "0000000004133",
+      "brand": "",
+      "description": "Gala Apple",
+      "categories": ["Produce"],
+      "temperature": { "indicator": "Ambient", "heatSensitive": false },
+      "productPageURI": "/p/synthetic-gala-apple/0000000004133",
+      "items": [
+        {
+          "itemId": "0000000004133",
+          "price": { "regular": 1.99, "promo": 0 },
+          "size": "1 lb",
+          "soldBy": "WEIGHT",
+          "fulfillment": { "curbside": true, "delivery": true, "instore": true, "shiptohome": false }
+        }
+      ]
+    },
+    {
+      "_case": "loose organic PLU 94133 (9 + 4133); text agrees; promo and per-unit estimates stay raw",
+      "productId": "0000000094133",
+      "upc": "0000000094133",
+      "brand": "",
+      "description": "Organic Gala Apple",
+      "categories": ["Produce", "Natural & Organic"],
+      "temperature": { "indicator": "Ambient", "heatSensitive": false },
+      "items": [
+        {
+          "itemId": "0000000094133",
+          "price": { "regular": 2.49, "promo": 1.99, "regularPerUnitEstimate": 0.83, "promoPerUnitEstimate": 0.66 },
+          "size": "1 lb",
+          "soldBy": "WEIGHT",
+          "fulfillment": { "curbside": true, "delivery": true, "instore": true, "shiptohome": false }
+        }
+      ]
+    },
+    {
+      "_case": "3 lb bag: UNIT with size 3 lb gives lb via the package; organic unknown (no PLU, no text)",
+      "productId": "9100000000301",
+      "upc": "9100000000301",
+      "brand": "Kroger",
+      "description": "Kroger® Honeycrisp Apples 3 lb Bag",
+      "categories": ["Produce"],
+      "temperature": { "indicator": "Ambient", "heatSensitive": false },
+      "items": [
+        {
+          "itemId": "9100000000301",
+          "price": { "regular": 5.99, "promo": 0 },
+          "size": "3 lb",
+          "soldBy": "UNIT",
+          "fulfillment": { "curbside": true, "delivery": true, "instore": true, "shiptohome": false }
+        }
+      ]
+    },
+    {
+      "_case": "80/20 ground beef sold by WEIGHT; Refrigerated gives fresh by D4",
+      "productId": "9100000000401",
+      "upc": "9100000000401",
+      "brand": "Kroger",
+      "description": "Kroger® 80/20 Ground Beef",
+      "categories": ["Meat & Seafood"],
+      "temperature": { "indicator": "Refrigerated", "heatSensitive": true },
+      "items": [
+        {
+          "itemId": "9100000000401",
+          "price": { "regular": 5.49, "promo": 0, "regularPerUnitEstimate": 5.49 },
+          "size": "1 lb",
+          "soldBy": "WEIGHT",
+          "fulfillment": { "curbside": true, "delivery": true, "instore": true, "shiptohome": false }
+        }
+      ]
+    },
+    {
+      "_case": "frozen chicken: temperature Frozen gives frozen by D4; UNIT 3 lb",
+      "productId": "9100000000501",
+      "upc": "9100000000501",
+      "brand": "Kroger",
+      "description": "Kroger® Boneless Skinless Chicken Breasts",
+      "categories": ["Meat & Seafood"],
+      "temperature": { "indicator": "Frozen", "heatSensitive": true },
+      "items": [
+        {
+          "itemId": "9100000000501",
+          "price": { "regular": 9.99, "promo": 0 },
+          "size": "3 lb",
+          "soldBy": "UNIT",
+          "fulfillment": { "curbside": true, "delivery": true, "instore": true, "shiptohome": false }
+        }
+      ]
+    },
+    {
+      "_case": "no price at this location: unit price null with an issue, never zero",
+      "productId": "0000000004011",
+      "upc": "0000000004011",
+      "brand": "",
+      "description": "Banana",
+      "categories": ["Produce"],
+      "temperature": { "indicator": "Ambient", "heatSensitive": false },
+      "items": [
+        {
+          "itemId": "0000000004011",
+          "size": "1 lb",
+          "soldBy": "WEIGHT",
+          "fulfillment": { "curbside": false, "delivery": false, "instore": true, "shiptohome": false }
+        }
+      ]
+    },
+    {
+      "_case": "multiple items[] entries: unit price null with an issue",
+      "productId": "9100000000701",
+      "upc": "9100000000701",
+      "brand": "Kroger",
+      "description": "Strawberries",
+      "categories": ["Produce"],
+      "temperature": { "indicator": "Refrigerated", "heatSensitive": true },
+      "items": [
+        {
+          "itemId": "9100000000701",
+          "price": { "regular": 3.99, "promo": 0 },
+          "size": "1 lb",
+          "soldBy": "UNIT"
+        },
+        {
+          "itemId": "9100000000702",
+          "price": { "regular": 6.99, "promo": 0 },
+          "size": "2 lb",
+          "soldBy": "UNIT"
+        }
+      ]
+    },
+    {
+      "_case": "category conflict: the text is meat but categories hold no meat category",
+      "productId": "9100000000801",
+      "upc": "9100000000801",
+      "brand": "Kroger",
+      "description": "Boneless Skinless Chicken Thighs",
+      "categories": ["Deli"],
+      "temperature": { "indicator": "Refrigerated", "heatSensitive": true },
+      "items": [
+        {
+          "itemId": "9100000000801",
+          "price": { "regular": 4.99, "promo": 0 },
+          "size": "1 lb",
+          "soldBy": "WEIGHT"
+        }
+      ]
+    },
+    {
+      "_case": "loose PLU 4958 sold each (UNIT, size each); conventional by D4",
+      "productId": "0000000004958",
+      "upc": "0000000004958",
+      "brand": "",
+      "description": "Lemon",
+      "categories": ["Produce"],
+      "temperature": { "indicator": "Ambient", "heatSensitive": false },
+      "items": [
+        {
+          "itemId": "0000000004958",
+          "price": { "regular": 0.79, "promo": 0 },
+          "size": "each",
+          "soldBy": "UNIT",
+          "fulfillment": { "curbside": true, "delivery": true, "instore": true, "shiptohome": false }
+        }
+      ]
+    }
+  ],
+  "meta": { "pagination": { "start": 0, "limit": 20, "total": 9 } }
+}

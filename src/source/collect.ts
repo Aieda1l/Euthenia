@@ -1063,7 +1063,7 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
 
     // H4: only the validations that count for the offer under R9.
     const countedRows = snapshot.offers.filter((offer) => counted.has(offer.id)).flatMap((offer) =>
-      validValidationsFor(offer, snapshot.proof.validations)
+      validValidationsFor(offer, snapshot.proof.validations, evaluatedAt)
         .map((validation) => [offer.id, offer.evidence[0]?.sourceItemId, validation.checkedAt, validation.applicabilityEvidence,
           validation.calendarEvidence, validation.evidenceIds.join(", ")]));
     lines.push(`## Counted offers and validation evidence (${counted.size})`, "");

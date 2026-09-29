@@ -266,11 +266,13 @@ function validationProblems(validation: Validation, offer: Offer, nowMs?: number
 
 /**
  * The validations that count for `offer` under R9: those naming it with no
- * validation problem (the same checks as evaluateProof). Malformed entries are skipped.
+ * validation problem (the same checks as evaluateProof when given the same
+ * check time `now`). Malformed entries are skipped.
  */
-export function validValidationsFor(offer: Offer, validations: readonly unknown[]): Validation[] {
+export function validValidationsFor(offer: Offer, validations: readonly unknown[], now?: Date): Validation[] {
+  const nowMs = now === undefined ? undefined : now.getTime();
   return validations.filter((validation): validation is Validation =>
-    isRecord(validation) && validation.offerId === offer.id && validationProblems(validation as unknown as Validation, offer).length === 0);
+    isRecord(validation) && validation.offerId === offer.id && validationProblems(validation as unknown as Validation, offer, nowMs).length === 0);
 }
 
 function emptyCounts(): Record<Family, FamilyCount> {

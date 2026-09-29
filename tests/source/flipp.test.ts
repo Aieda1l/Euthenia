@@ -642,6 +642,13 @@ describe("request headers", () => {
     ["a 401 whose body echoes the header", () => sequence(() => jsonResponse(`{"error":"bad header ${SECRET}"}`, { status: 401 }))],
     ["a cross-host redirect whose location names the token", () => sequence(() =>
       statusResponse(302, { location: `https://backflipp.wishabi.com/flipp/items/1?t=${TOKEN}` }))],
+    ["a same-host redirect whose location names the token, then a 200", () => sequence(
+      () => statusResponse(302, { location: `/v1/products?t=${TOKEN}` }),
+      () => jsonResponse('{"ok":true}'))],
+    ["a same-host redirect whose location names the token, then 503s", () => sequence(
+      () => statusResponse(302, { location: `/v1/products?t=${TOKEN}` }),
+      () => statusResponse(503), () => statusResponse(503), () => statusResponse(503))],
+    ["a 200 JSON-typed body that echoes the header", () => sequence(() => jsonResponse(SECRET))],
   ])("never records the header value on %s", async (_label, makeFetcher) => {
     const fetcher = makeFetcher();
     const attempts: FlippAttempt[] = [];
@@ -662,6 +669,16 @@ describe("request headers", () => {
     const response = await fetchFlippResponse(KROGER_URL, { fetcher, headers, onAttempt: (attempt) => attempts.push(attempt) });
     expect(attempts).toHaveLength(2);
     expect([inspect(response, { depth: 10 }), ...attempts.map(auditText)].join("\n")).not.toContain(TOKEN);
+  });
+
+  it("names a rejected redirect's target URL exactly once, with or without caller headers", async () => {
+    const target = "https://backflipp.wishabi.com/flipp/items/1";
+    for (const options of [{}, { headers }]) {
+      const fetcher = sequence(() => statusResponse(302, { location: target }));
+      const error = await fetchFlippResponse(KROGER_URL, { fetcher, ...options }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(FlippSourceError);
+      expect((error as Error).message.split(target)).toHaveLength(2);
+    }
   });
 
   it("keeps the transport diagnosis while redacting the header value", async () => {

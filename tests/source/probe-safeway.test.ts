@@ -263,6 +263,26 @@ describe("runProbe evidence for the channel and store (review N2, N3)", () => {
     expect(lines.at(-1)).toBe("FEASIBLE");
   });
 
+  it("says whether the pickup mode was echoed by the response", async () => {
+    const echoing = fakeSite({
+      search: (url) => json(searchJson([{ id: "970000001", price: 1.99 }], { storeId: "2980", channel: url.searchParams.get("channel") ?? "" })),
+    });
+    expect((await run(echoing.fetcher)).output).toContain("pickup mode: echoed by the response");
+    const silent = fakeSite();
+    expect((await run(silent.fetcher)).output).toContain("pickup mode: not confirmed by the response");
+  });
+
+  it("hints that the pickup parameter may be wrong when in-store searches count but pickup ones do not", async () => {
+    const site = fakeSite({
+      search: (url) => (url.searchParams.get("channel") === "pickup"
+        ? json('{"error":"bad channel"}', 400)
+        : json(searchJson([{ id: "970000001", price: 1.99 }], { storeId: "2980" }))),
+    });
+    const { output, lines } = await run(site.fetcher);
+    expect(output).toContain("hint: in-store searches counted but pickup searches did not; the pickup parameter value may be wrong");
+    expect(lines.at(-1)).toBe("NOT FEASIBLE");
+  });
+
   it("says so when no counting response echoed the store", async () => {
     const site = fakeSite({ search: () => json(searchJson([{ id: "970000001", price: 1.99 }])) });
     const { output } = await run(site.fetcher);

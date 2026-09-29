@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // S0 - Safeway feasibility probe (plan: "Catalog price amendment", section 5).
@@ -451,6 +451,15 @@ export async function runProbe(deps: ProbeDeps): Promise<ExitCode> {
       result.mode === D1_MODE && result.analysis.counts && result.analysis.storeIds.includes(STORE_ID)).length;
     say(`criterion: ${verdict.met}/${QUERIES.length} ${D1_MODE} queries returned HTTP 200 JSON with store-scoped prices (need ${verdict.needed}); ` +
       `${echoed} of them echoed store ${STORE_ID}${echoed === 0 ? " (store scope not confirmed by the response)" : ""}`);
+    // The pickup value is a guess; an API that ignores it would return default-mode prices.
+    const pickupChannel = MODES.find((mode) => mode.name === D1_MODE)?.channel;
+    const pickupEchoed = results.some((result) => result.mode === D1_MODE && result.analysis.counts &&
+      pickupChannel !== undefined && result.analysis.channels.includes(pickupChannel));
+    say(`${D1_MODE} mode: ${pickupEchoed ? "echoed by the response" : "not confirmed by the response (see modePricesDiffer; validation in Pickup mode on the site still applies)"}`);
+    const instoreCounted = results.some((result) => result.mode !== D1_MODE && result.analysis.counts);
+    if (!verdict.feasible && instoreCounted) {
+      say(`hint: in-store searches counted but ${D1_MODE} searches did not; the ${D1_MODE} parameter value may be wrong. Report this before choosing a fallback.`);
+    }
     say(verdict.feasible ? "FEASIBLE" : "NOT FEASIBLE");
 
     // 5. Self-check before anything is printed or saved.
@@ -498,4 +507,8 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   const auditRoot = fileURLToPath(new URL("../data/audit/", import.meta.url));
   process.exitCode = await runProbe({ fetcher: fetch, auditRoot, print: (text) => console.log(text) });
+} else if (/^probe-safeway(\.[cm]?[jt]s)?$/i.test(basename(process.argv[1] ?? ""))) {
+  // Launched directly but the entry-point check failed: say so instead of exiting silently.
+  console.log("ERROR: entry-point check failed; the probe did not run. Please report this output.");
+  process.exitCode = 2;
 }

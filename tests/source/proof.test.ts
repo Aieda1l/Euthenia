@@ -20,6 +20,7 @@ import {
   checkProof,
   evaluateProof,
   storeAttestationFor,
+  validValidationsFor,
 } from "../../src/source/proof.js";
 
 // SYNTHETIC proof fixtures, for exercising evaluateProof only. They are built
@@ -912,6 +913,15 @@ describe("catalog channel gate (amendment section 3, synthetic)", () => {
       const reasons = evaluateProof(snap, later).excluded.find((entry) => entry.offerId === KC0)?.reasons.join("; ") ?? "";
       expect(reasons).not.toMatch(/checkedAt/);
     }
+  });
+
+  it("validValidationsFor applies the same check-time rule as evaluateProof when given now", () => {
+    const snap = snapshot();
+    const target = offer(snap, K0);
+    const early = validationFor(target);
+    const late = { ...early, checkedAt: "2026-09-24T19:00:00.001Z" };
+    expect(validValidationsFor(target, [early, late], NOW)).toEqual([early]);
+    expect(validValidationsFor(target, [early, late])).toEqual([early, late]);
   });
 
   it("any validation checked after the gate's check time does not count", () => {

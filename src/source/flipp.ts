@@ -25,9 +25,23 @@ export class FlippSourceError extends Error {
    * null when there was none (transport error, timeout, schema problem).
    * A11: the collector treats an item-detail 404/410 as a per-item exclusion.
    */
+  /** The message without the URL suffix, so a redacted copy can be rebuilt. */
+  readonly detail: string;
   constructor(message: string, readonly url: string | null = null, readonly status: number | null = null) {
     super(url === null ? message : `${message} (${url})`);
+    this.detail = message;
   }
+}
+
+/**
+ * A copy of `error` with caller header values hidden in its detail and URL,
+ * or `error` itself when neither contains one. Server text (a Location, a
+ * content type, a JSON parse message quoting the body) can echo a header.
+ */
+function redactedError(error: FlippSourceError, redact: (text: string) => string): FlippSourceError {
+  const detail = redact(error.detail);
+  const url = error.url === null ? null : redact(error.url);
+  return detail === error.detail && url === error.url ? error : new FlippSourceError(detail, url, error.status);
 }
 
 /** The source asked us to wait longer than we may; nothing may be retried before nextPermittedAt. */
@@ -288,9 +302,14 @@ async function sendFollowingRedirects(exchange: Exchange, attempt: number): Prom
     } catch (error) {
       report(exchange, where, { reply }, describeError(error));
       // The Location header is server text, so it may echo a caller header value.
-      throw error instanceof FlippSourceError
-        ? new FlippSourceError(exchange.redact(error.message), error.url === null ? null : exchange.redact(error.url), error.status)
-        : error;
+      throw error instanceof FlippSourceError ? redactedError(error, exchange.redact) : error;
+    }
+    // A same-host Location that carries a caller header value would put it in
+    // every later URL (errors, finalUrl); such a hop is never followed.
+    if (exchange.redact(next.href) !== next.href) {
+      const error = new FlippSourceError("redirect rejected: Location carries a request header value", exchange.redact(next.href), reply.status);
+      report(exchange, where, { reply }, error.message);
+      throw error;
     }
     report(exchange, where, { reply }, null);
     current = next;
@@ -491,7 +510,8 @@ export async function fetchFlippResponse(url: URL, options: FetchOptions = {}): 
           response = validated(reply, url);
         } catch (error) {
           done(describeError(error));
-          throw error;
+          // A content type or JSON parse message quoting the body may echo a caller header value.
+          throw error instanceof FlippSourceError ? redactedError(error, exchange.redact) : error;
         }
         done(null);
         return response;

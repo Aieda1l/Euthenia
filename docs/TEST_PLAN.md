@@ -11,7 +11,7 @@ As of 2026-09-24. These are the real scripts from `package.json`:
 | `npm run test:source` | `vitest run tests/source`: source/normalization/proof tests |
 | `npm run typecheck` | `tsc --noEmit`: strict ES2022, NodeNext |
 | `npm run lint` | `eslint .` (flat config, typescript-eslint recommended) |
-| `npm run source:collect -- --postal-code 98105 [--validations <file>] [--report <file>]` | Live Flipp collection and source-proof gate. Exit 0 PASS (snapshot replaced), 1 BLOCKED, 2 source/usage error, 3 deferred. Writes `data/audit/<run-id>/`. |
+| `npm run source:collect -- --postal-code 98105 [--validations <file>] [--report <file>]` | Live collection and source-proof gate: Flipp weekly ads (in-store-ad, reference only) plus Kroger catalog prices for QFC 70500807 (gate channel retailer-pickup). Requires `KROGER_CLIENT_ID`/`KROGER_CLIENT_SECRET` in the environment; without them it exits 2 before any request. Exit 0 PASS (snapshot replaced), 1 BLOCKED, 2 source/usage error, 3 deferred. Writes `data/audit/<run-id>/`. |
 | `npx tsx scripts/probe-safeway.ts` | S0 Safeway store-search feasibility probe. Run only on the user's PC (Safeway blocks this cloud host). Exit 0 FEASIBLE, 1 NOT FEASIBLE, 2 error or self-check failure. Saves search bodies only, under `data/audit/`. |
 
 Pinned toolchain: typescript 6.0.3, typescript-eslint 8.70.1, eslint 10.11.0, vitest 5.0.1 (with peer vite 8.3.1), tsx 4.23.15, @types/node 22.20.4.

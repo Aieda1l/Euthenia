@@ -3,6 +3,7 @@ import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } f
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import type {
+  Channel,
   Family,
   FlyerAttestation,
   Offer,
@@ -15,6 +16,7 @@ import type {
 import { freshness, parseTimestamp } from "../shared/freshness.js";
 import { comparisonKey, identityGaps } from "../shared/identity.js";
 import { isRational, rationalToString } from "../shared/money.js";
+import { CATALOG_QUERIES } from "./catalogQueries.js";
 import {
   FlippDeferredError,
   FlippSourceError,
@@ -25,21 +27,51 @@ import {
   parseFlippFlyer,
   parseFlippItem,
   parseFlippListing,
+  type FetchOptions,
   type FlippAttempt,
   type FlippFlyer,
   type FlippResponse,
   type FlippRow,
 } from "./flipp.js";
+import {
+  QFC_LOCATION_ID,
+  krogerLocation,
+  krogerProducts,
+  krogerToken,
+  normalizeKrogerResponse,
+  type KrogerEnv,
+  type KrogerExclusion,
+  type KrogerLocation,
+} from "./kroger.js";
 import { classifyListRow, flippEvidence, normalizeFlipp } from "./normalize.js";
-import { assembleProof, attestationFor, candidatePairs, evaluateProof, validValidationsFor, type ProofEvaluation } from "./proof.js";
+import {
+  assembleProof,
+  attestationFor,
+  candidatePairs,
+  evaluateProof,
+  storeAttestationFor,
+  validValidationsFor,
+  type ProofEvaluation,
+} from "./proof.js";
 
-// Live Flipp collection for the M1 source-proof gate (plan Task 1, addendum
-// R8-R11): listing -> current QFC/Safeway Weekly Ads -> produce/meat item
-// details -> normalized offers -> recomputed gate. The snapshot is replaced
-// only on PASS; every run leaves an audit under data/audit/<run-id>/.
+// Collection for the M1 source-proof gate (plan Task 1, addendum R8-R11, and
+// the catalog price amendment, DEC-20260928-002):
+// 1. Flipp: listing -> current QFC/Safeway Weekly Ads -> produce/meat item
+//    details -> weekly-ad offers (in-store-ad), collected and reported for
+//    reference only; they never count toward the gate (D2).
+// 2. Kroger (K2): token -> QFC location 70500807 -> the fixed CATALOG_QUERIES
+//    product searches -> catalog offers (retailer-pickup, D1).
+// 3. The gate is recomputed for the one channel retailer-pickup. The snapshot
+//    is replaced only on PASS; every run leaves an audit under
+//    data/audit/<run-id>/.
 
 export const POSTAL_CODE = "98105";
 const PROOF_FAMILIES: [Family, Family] = ["kroger", "albertsons"];
+/** D1 (DEC-20260928-002): the one channel the gate evaluates; equals proof.ts CATALOG_CHANNEL. */
+const GATE_CHANNEL: Channel = "retailer-pickup";
+/** The Kroger banner for location 70500807 (amendment section 1). */
+const KROGER_RETAILER = "QFC";
+const CREDENTIAL_NAMES = ["KROGER_CLIENT_ID", "KROGER_CLIENT_SECRET"] as const;
 /** Listing merchant -> retailer family (R11). No other merchant is collected. */
 const MERCHANTS: ReadonlyArray<{ family: Family; merchant: string; retailer: string }> = [
   { family: "kroger", merchant: "QFC", retailer: "QFC" },
@@ -88,6 +120,11 @@ export interface CollectOptions {
   /** Injected for tests; omitted means live HTTPS through global fetch. */
   fetcher?: typeof fetch;
   clock?: () => Date;
+  /**
+   * Where KROGER_CLIENT_ID and KROGER_CLIENT_SECRET are read, once, before any
+   * request; process.env when omitted. The values are never recorded.
+   */
+  env?: KrogerEnv;
 }
 
 export interface CollectResult {
@@ -264,6 +301,55 @@ async function loadValidationFile(path: string, shown: string): Promise<Validati
 }
 
 // ---------------------------------------------------------------------------
+// Kroger credentials (K2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The Kroger credentials, read once and checked before any request (Flipp
+ * included), so a run never collects the weekly ads only to fail at the token.
+ * A missing, blank or whitespace-padded value is a usage error whose message
+ * names only the variables, never a value. krogerToken checks them again.
+ */
+function krogerCredentials(env: KrogerEnv): KrogerEnv {
+  const value = (name: (typeof CREDENTIAL_NAMES)[number]): string => env[name] ?? "";
+  const unset = CREDENTIAL_NAMES.filter((name) => value(name).trim() === "");
+  if (unset.length > 0) {
+    throw new CollectInputError(`${unset.join(" and ")} ${unset.length === 1 ? "is" : "are"} not set; ` +
+      "set KROGER_CLIENT_ID and KROGER_CLIENT_SECRET in the environment (never in a file)");
+  }
+  const padded = CREDENTIAL_NAMES.filter((name) => value(name) !== value(name).trim());
+  if (padded.length > 0) {
+    throw new CollectInputError(`${padded.join(" and ")} ${padded.length === 1 ? "has" : "have"} leading or trailing whitespace; ` +
+      "remove it from the environment setting");
+  }
+  return { KROGER_CLIENT_ID: env.KROGER_CLIENT_ID, KROGER_CLIENT_SECRET: env.KROGER_CLIENT_SECRET };
+}
+
+/**
+ * Section 3 (the R8 analogue): the Kroger catalog offers are `verified` only
+ * when a valid StoreAttestation names QFC_LOCATION_ID, this run's location
+ * lookup returned that store, and the attestation was checked no later than
+ * this run's collection time (attestations come before collection, section 4).
+ * Anything else leaves them `unknown`.
+ */
+function krogerStore(file: ValidationFile | null, location: KrogerLocation, collectedAt: Date): KrogerStore {
+  const store = storeAttestationFor(file, "kroger", "kroger-api", QFC_LOCATION_ID);
+  const problems = [...store.problems];
+  const attestation = store.attestation;
+  if (attestation !== null) {
+    const where = `kroger kroger-api store ${QFC_LOCATION_ID}`;
+    if (location.locationId !== QFC_LOCATION_ID) problems.push(`${where}: this run's location lookup returned ${location.locationId}`);
+    const checked = parseTimestamp(attestation.checkedAt);
+    if (checked === null || checked > collectedAt.getTime()) {
+      problems.push(`${where}: attestation checkedAt ${attestation.checkedAt} is after this run's collection time ${collectedAt.toISOString()}; ` +
+        "a store attestation must be made before collection");
+    }
+  }
+  const verified = store.applicability === "verified" && problems.length === 0;
+  return { applicability: verified ? "verified" : "unknown", attestation: verified ? attestation : null, problems };
+}
+
+// ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
@@ -424,6 +510,40 @@ interface RequestLog {
   sha256: string;
 }
 
+/** One catalog query: its response is audited as `file`, and its products normalized in query order. */
+interface KrogerQueryLog {
+  /** 1-based position in CATALOG_QUERIES; also the number in the raw file name. */
+  query: number;
+  term: string;
+  file: string;
+  /** Entries in the response's data[]. */
+  products: number;
+  offers: number;
+  excluded: number;
+  /** Products already seen earlier in this run (the first occurrence wins). */
+  repeats: number;
+}
+
+/** Store applicability for the Kroger catalog offers (section 3, the R8 analogue). */
+interface KrogerStore {
+  applicability: "verified" | "unknown";
+  attestation: StoreAttestation | null;
+  problems: string[];
+}
+
+/** The Kroger phase. The access token and the credentials are never part of it. */
+interface KrogerLog {
+  locationId: string;
+  tokenObtained: boolean;
+  /** This run's location lookup; null until it is confirmed. */
+  location: KrogerLocation | null;
+  store: KrogerStore | null;
+  queries: KrogerQueryLog[];
+  excluded: Array<{ query: number; term: string } & KrogerExclusion>;
+  /** Repeated products across or within responses (the first occurrence wins). */
+  notes: string[];
+}
+
 interface RunLog {
   runId: string;
   live: boolean;
@@ -433,6 +553,7 @@ interface RunLog {
   /** Display path (relative to the repository root, or a basename). */
   validationsPath: string | null;
   flyers: FlyerLog[];
+  kroger: KrogerLog;
   /** Malformed listing flyers from other merchants, ignored (A11). */
   listingNotes: string[];
   excludedRows: ExcludedRow[];
@@ -610,6 +731,7 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     evaluatedAt: null,
     validationsPath: validationsPath === null ? null : displayPath(validationsPath, repoRoot),
     flyers: [],
+    kroger: { locationId: QFC_LOCATION_ID, tokenObtained: false, location: null, store: null, queries: [], excluded: [], notes: [] },
     listingNotes: [],
     excludedRows: [],
     requests: [],
@@ -629,13 +751,15 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     controller.abort(stopped);
   }
 
-  async function get(url: URL, file: string): Promise<{ response: FlippResponse; receivedAt: string }> {
-    const response = await fetchFlippResponse(url, {
-      fetcher: options.fetcher,
-      now: () => clock().getTime(),
-      signal: controller.signal,
-      onAttempt: (attempt) => log.attempts.push(attempt),
-    });
+  // Every GET (Flipp and Kroger) shares the run's clock, abort (A12) and attempt audit.
+  const requestOptions: Pick<FetchOptions, "now" | "signal" | "onAttempt"> = {
+    now: () => clock().getTime(),
+    signal: controller.signal,
+    onAttempt: (attempt) => log.attempts.push(attempt),
+  };
+
+  /** Saves an accepted response's exact bytes under raw/ and logs it; returns the receipt time. */
+  async function record(response: FlippResponse, file: string): Promise<string> {
     const receivedAt = clock().toISOString();
     await writeFile(join(rawDir, file), response.bytes);
     log.requests.push({
@@ -645,7 +769,79 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
       receivedAt,
       sha256: createHash("sha256").update(response.bytes).digest("hex"),
     });
-    return { response, receivedAt };
+    return receivedAt;
+  }
+
+  async function get(url: URL, file: string): Promise<{ response: FlippResponse; receivedAt: string }> {
+    const response = await fetchFlippResponse(url, { ...requestOptions, fetcher: options.fetcher });
+    return { response, receivedAt: await record(response, file) };
+  }
+
+  /**
+   * A Kroger response is audited only when it does not echo the access token:
+   * the token must never reach the audit, the report or an offer.
+   */
+  async function recordKroger(response: FlippResponse, file: string, token: string): Promise<string> {
+    if (response.text.includes(token)) {
+      throw new FlippSourceError("Kroger response contains the access token; it was neither saved nor used", response.requestUrl);
+    }
+    return record(response, file);
+  }
+
+  /**
+   * K2: token, QFC location, then every CATALOG_QUERIES search in order, each
+   * normalized in that order with one shared `seen` map, so the first
+   * occurrence of a product always wins. Requests run one at a time; a
+   * failure or deferral ends the phase with nothing sent after it (A12).
+   */
+  async function collectKroger(file: ValidationFile | null, credentials: KrogerEnv): Promise<Offer[]> {
+    const kroger = log.kroger;
+    const fetcher = options.fetcher ?? fetch;
+    const token = await krogerToken(credentials, fetcher, { signal: controller.signal });
+    kroger.tokenObtained = true;
+    const { location, response } = await krogerLocation(token, fetcher, QFC_LOCATION_ID, requestOptions);
+    await recordKroger(response, "kroger-location.json", token);
+    kroger.location = location;
+    const store = krogerStore(file, location, started);
+    kroger.store = store;
+
+    const seen = new Map<string, string>();
+    const offers: Offer[] = [];
+    for (const [index, term] of CATALOG_QUERIES.entries()) {
+      const query = index + 1;
+      const products = await krogerProducts(token, fetcher, term, QFC_LOCATION_ID, requestOptions);
+      // A same-host redirect could change filter.locationId, the store scope of every price.
+      if (products.finalUrl !== products.requestUrl) {
+        throw new FlippSourceError(`Kroger products query ${query} was redirected to ${products.finalUrl}; a redirect could change the store scope`, products.requestUrl);
+      }
+      const rawFile = `kroger-products-${query}.json`;
+      const observedAt = await recordKroger(products, rawFile, token);
+      const result = normalizeKrogerResponse(products, {
+        family: "kroger",
+        retailer: KROGER_RETAILER,
+        postalCode: POSTAL_CODE,
+        observedAt,
+        applicability: store.applicability,
+        locationId: QFC_LOCATION_ID,
+      }, seen);
+      offers.push(...result.offers);
+      kroger.excluded.push(...result.excluded.map((entry) => ({ query, term, ...entry })));
+      kroger.notes.push(...result.notes);
+      kroger.queries.push({
+        query,
+        term,
+        file: `raw/${rawFile}`,
+        // normalizeKrogerResponse has checked that data is an array.
+        products: (products.json as { data: unknown[] }).data.length,
+        offers: result.offers.length,
+        excluded: result.excluded.length,
+        repeats: result.notes.length,
+      });
+    }
+    if (kroger.queries.every((entry) => entry.products === 0)) {
+      throw new FlippSourceError(`every Kroger catalog query (${kroger.queries.length} of ${CATALOG_QUERIES.length}) returned zero products at location ${QFC_LOCATION_ID}`);
+    }
+    return offers;
   }
 
   async function collectItem({ flyer, row, name }: Candidate): Promise<ItemResult> {
@@ -710,6 +906,7 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     if (options.postalCode !== POSTAL_CODE) {
       throw new CollectInputError(`--postal-code must be ${POSTAL_CODE} (fixed by the M1 contract); got ${JSON.stringify(options.postalCode)}`);
     }
+    const credentials = krogerCredentials(options.env ?? process.env);
     const file = validationsPath === null ? null : await loadValidationFile(validationsPath, log.validationsPath ?? "");
 
     const listing = await get(flippListingUrl(POSTAL_CODE), "listing.json");
@@ -756,9 +953,9 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
         throw error;
       }
     });
-    const offers: Offer[] = [];
+    const weeklyAdOffers: Offer[] = [];
     for (const result of results) {
-      if ("offer" in result) offers.push(result.offer);
+      if ("offer" in result) weeklyAdOffers.push(result.offer);
       else log.excludedRows.push(result.excluded);
     }
     // A11: a flyer whose every detail request came back unavailable is a source problem, not a gate result.
@@ -769,10 +966,12 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
       }
     }
 
+    // Weekly-ad offers stay in the snapshot for reference; the gate counts only GATE_CHANNEL (D2).
+    const offers = [...weeklyAdOffers, ...await collectKroger(file, credentials)];
+
     const evaluatedAt = clock();
     log.evaluatedAt = evaluatedAt.toISOString();
-    // Interim gate channel: in-store-ad until K2 switches it to the D1 channel (retailer-pickup).
-    const { proof, notes } = assembleProof(file, offers, [PROOF_FAMILIES[0], PROOF_FAMILIES[1]], evaluatedAt.toISOString(), "in-store-ad");
+    const { proof, notes } = assembleProof(file, offers, [PROOF_FAMILIES[0], PROOF_FAMILIES[1]], evaluatedAt.toISOString(), GATE_CHANNEL);
     log.proofNotes = notes;
     const snapshot: SourceSnapshot = { schemaVersion: 1, postalCode: POSTAL_CODE, collectedAt: log.collectedAt, offers, proof };
     const evaluation = evaluateProof(snapshot, evaluatedAt);
@@ -852,15 +1051,17 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     evaluatedAt: log.evaluatedAt,
     validationsPath: log.validationsPath,
     snapshotWritten: outcome.snapshotWritten,
+    gateChannel: GATE_CHANNEL,
     flyers: log.flyers,
+    kroger: log.kroger,
     listingNotes: log.listingNotes,
-    attestationProblems: log.flyers.flatMap((flyer) => flyer.attestation.problems),
+    attestationProblems: attestationProblems(log),
     excludedRows: log.excludedRows,
     normalizationIssues: offers.filter((offer) => offer.normalizationIssue !== null)
       .map((offer) => ({ offerId: offer.id, issue: offer.normalizationIssue })),
     proofNotes: log.proofNotes,
     evaluation: outcome.evaluation,
-    candidatePairs: outcome.snapshot ? candidatePairs(outcome.snapshot.offers) : [],
+    candidatePairs: outcome.snapshot ? candidatePairs(gateOffers(outcome.snapshot.offers)) : [],
     requests: log.requests,
     attempts,
     writeErrors: [...writeErrors],
@@ -886,6 +1087,16 @@ export async function collect(options: CollectOptions): Promise<CollectResult> {
     reportWritten,
     writeErrors,
   };
+}
+
+/** The offers in the gate channel: the only ones the gate counts or pairs (D2). */
+function gateOffers(offers: Offer[]): Offer[] {
+  return offers.filter((offer) => offer.channel === GATE_CHANNEL);
+}
+
+/** Flyer attestation problems, then the Kroger store attestation's. */
+function attestationProblems(log: RunLog): string[] {
+  return [...log.flyers.flatMap((flyer) => flyer.attestation.problems), ...(log.kroger.store?.problems ?? [])];
 }
 
 // ---------------------------------------------------------------------------
@@ -975,18 +1186,76 @@ function attestationText(flyer: FlyerLog): string {
   return problems.length > 0 ? `${base}; problems: ${problems.join("; ")}` : base;
 }
 
+/** The hosts of the recorded request attempts, in first-use order (the Kroger token request is never recorded). */
+function hostsText(log: RunLog): string {
+  const hosts = new Set(log.attempts.map((attempt) => {
+    try {
+      return new URL(attempt.url).hostname;
+    } catch {
+      return "an unparsable URL";
+    }
+  }));
+  return [...hosts].join(" and ");
+}
+
 function responsesText(log: RunLog): string {
   if (log.attempts.length === 0) return "none; no request was sent";
   if (!log.live) return "injected fetcher (test or replay data; not collected from the source by this run)";
   // H3: claim retrieved live responses only when at least one was accepted.
-  if (log.requests.length === 0) return `no response accepted (0 accepted of ${log.attempts.length} request attempts to backflipp.wishabi.com)`;
-  return `live HTTPS responses from backflipp.wishabi.com retrieved by this run (${log.requests.length} accepted of ${log.attempts.length} request attempts)`;
+  if (log.requests.length === 0) return `no response accepted (0 accepted of ${log.attempts.length} request attempts to ${hostsText(log)})`;
+  return `live HTTPS responses from ${hostsText(log)} retrieved by this run (${log.requests.length} accepted of ${log.attempts.length} request attempts)`;
 }
 
-/** H5: without a verified calendar, freshness rests on the observation age alone. */
+/**
+ * H5: without a verified calendar, freshness rests on the observation age
+ * alone; a catalog price claims no window, so its freshness always does.
+ */
 function freshnessText(offer: Offer, now: Date): string {
   const state = freshness(offer, now);
-  return offer.calendarRule === "unknown" ? `${state} (calendar unknown; observation age only)` : state;
+  if (offer.calendarRule === "unknown") return `${state} (calendar unknown; observation age only)`;
+  if (offer.calendarRule === "catalog-observation") return `${state} (catalog observation; observation age only)`;
+  return state;
+}
+
+function krogerLocationText(location: KrogerLocation | null): string {
+  if (location === null) return "not confirmed";
+  const { addressLine1, city, state, zipCode } = location.address;
+  return `${location.locationId}, chain ${location.chain}, ${JSON.stringify(location.name)}, ${JSON.stringify(`${addressLine1}, ${city}, ${state} ${zipCode}`)}`;
+}
+
+function krogerStoreText(store: KrogerStore | null): string {
+  if (store === null) return "not evaluated (the location lookup was not confirmed)";
+  const base = store.attestation !== null
+    ? `verified (checked ${store.attestation.checkedAt}; applicability: ${store.attestation.applicabilityEvidence})`
+    : "unknown (no valid store attestation for this store, checked before collection)";
+  return store.problems.length > 0 ? `${base}; problems: ${store.problems.join("; ")}` : base;
+}
+
+/** K2: the token step (never its value), the confirmed store, per-query counts, exclusions and repeats. */
+function krogerSection(log: RunLog): string[] {
+  const kroger = log.kroger;
+  const total = (field: "products" | "offers" | "excluded" | "repeats") => kroger.queries.reduce((sum, entry) => sum + entry[field], 0);
+  const lines = [`## Kroger catalog (QFC location ${QFC_LOCATION_ID}; gate channel ${GATE_CHANNEL})`, ""];
+  lines.push(
+    `- Access token: ${kroger.tokenObtained ? "obtained by this run; held in memory only and never recorded" : "not obtained"}`,
+    `- Location lookup: ${md(krogerLocationText(kroger.location))}`,
+    `- Store attestation: ${md(krogerStoreText(kroger.store))}`,
+    `- Catalog queries: ${kroger.queries.length} of ${CATALOG_QUERIES.length} completed; ${total("products")} products returned, ` +
+      `${total("offers")} offers, ${total("excluded")} excluded, ${total("repeats")} repeats`,
+    "",
+  );
+  if (kroger.queries.length > 0) {
+    lines.push(...table(["Query", "Term", "Raw file", "Products", "Offers", "Excluded", "Repeats"],
+      kroger.queries.map((entry) => [entry.query, entry.term, entry.file, entry.products, entry.offers, entry.excluded, entry.repeats])), "");
+  }
+  lines.push(`Excluded products (${kroger.excluded.length}):`, "");
+  if (kroger.excluded.length === 0) lines.push("None.", "");
+  else {
+    lines.push(...table(["Query", "Term", "data index", "Product ID", "Description", "Reason"],
+      kroger.excluded.map((entry) => [entry.query, entry.term, entry.index, entry.productId, entry.description, entry.reason])), "");
+  }
+  if (kroger.notes.length > 0) lines.push("Repeated products (the first occurrence wins):", "", ...bullets(kroger.notes), "");
+  return lines;
 }
 
 function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
@@ -1001,6 +1270,8 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
     `- Postal code: ${md(log.postalCode)}`,
     `- Responses: ${responsesText(log)}`,
     `- Validations file: ${log.validationsPath === null ? "none" : md(log.validationsPath)}`,
+    `- Gate channel: ${GATE_CHANNEL} (catalog prices from the Kroger API for QFC ${QFC_LOCATION_ID}; ` +
+      "weekly-ad offers are in-store-ad and shown for reference only, never counted)",
     `- Snapshot: ${outcome.snapshotWritten ? "data/snapshots/m1-source.json replaced by this run" : "not written; any prior data/snapshots/m1-source.json is unchanged"}`,
   );
   if (outcome.nextPermittedAt !== null) lines.push(`- Next permitted request: ${outcome.nextPermittedAt}`);
@@ -1013,7 +1284,7 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
     }
   }
 
-  lines.push("## Selected flyers", "");
+  lines.push("## Selected flyers", "", `Weekly ads (in-store-ad): collected for reference only; they never count toward the ${GATE_CHANNEL} gate.`, "");
   if (log.flyers.length === 0) lines.push("None selected.", "");
   else {
     lines.push(...table(
@@ -1022,10 +1293,11 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
     ), "");
   }
   if (log.listingNotes.length > 0) lines.push("Ignored listing entries (malformed flyers from other merchants):", "", ...bullets(log.listingNotes), "");
+  lines.push(...krogerSection(log));
 
   if (evaluation !== null && snapshot !== null) {
     const evaluatedAt = new Date(log.evaluatedAt ?? log.collectedAt);
-    lines.push("## Family counts (qualifying offers)", "");
+    lines.push(`## Family counts (qualifying ${GATE_CHANNEL} offers)`, "");
     lines.push(...table(
       ["Family", "Total", "Produce", "Meat", "Counted source item IDs"],
       PROOF_FAMILIES.map((family) => {
@@ -1038,28 +1310,52 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
     lines.push(...(evaluation.failures.length > 0 ? bullets(evaluation.failures) : ["- none"]), "");
     if (evaluation.notes.length > 0) lines.push("Gate notes:", "", ...bullets(evaluation.notes), "");
     if (log.proofNotes.length > 0) lines.push("Proof assembly notes:", "", ...bullets(log.proofNotes), "");
-    const attestationProblems = log.flyers.flatMap((flyer) => flyer.attestation.problems);
-    if (attestationProblems.length > 0) lines.push("Attestation problems:", "", ...bullets(attestationProblems), "");
+    const problems = attestationProblems(log);
+    if (problems.length > 0) lines.push("Attestation problems:", "", ...bullets(problems), "");
 
     const counted = new Set(PROOF_FAMILIES.flatMap((family) => evaluation.families[family].offerIds));
     const exclusions = new Map(evaluation.excluded.map((entry) => [entry.offerId, entry.reasons.join("; ")]));
-    lines.push(`## In-scope offers (${snapshot.offers.length})`, "");
-    lines.push(...table(
-      ["Offer", "Source item", "Name", "Category", "Raw price and condition text", "Unit price", "Package terms",
-        "comparisonKey or unknown fields", "Conditions", "Applicability", "Calendar rule", "Raw validity", "Starts / expires",
-        "Freshness", "Evidence", "Source URL", "Gate"],
-      snapshot.offers.map((offer) => {
-        const evidence = offer.evidence[0];
-        const key = comparisonKey(offer.identity);
-        const gate = counted.has(offer.id) ? "counted" : `excluded: ${exclusions.get(offer.id) ?? "source item already counted"}`;
-        return [
-          offer.id, evidence?.sourceItemId, offer.label, offer.identity.category, rawText(offer), unitPriceText(offer), packageText(offer),
-          key ?? `unknown: ${identityGaps(offer.identity).join(", ")}`, conditionsText(offer), offer.applicability, offer.calendarRule,
-          rawValidityText(offer), `${offer.startsAt ?? "unknown"} / ${offer.expiresAt ?? "unknown"}`, freshnessText(offer, evaluatedAt),
-          evidence?.id, evidence?.sourceUrl, gate,
-        ];
-      }),
-    ), "");
+    const gateText = (offer: Offer) => counted.has(offer.id) ? "counted" : `excluded: ${exclusions.get(offer.id) ?? "source item already counted"}`;
+    const keyText = (offer: Offer) => comparisonKey(offer.identity) ?? `unknown: ${identityGaps(offer.identity).join(", ")}`;
+
+    const catalog = gateOffers(snapshot.offers);
+    lines.push(`## Catalog offers in the gate channel ${GATE_CHANNEL} (${catalog.length})`, "");
+    if (catalog.length === 0) lines.push("None.", "");
+    else {
+      lines.push(...table(
+        ["Offer", "Product ID", "Description", "Category", "Raw price fields", "Unit price", "Package terms",
+          "comparisonKey or unknown fields", "Conditions", "Applicability", "Calendar rule", "Observed at", "Freshness",
+          "Evidence", "Request URL", "Product page", "Gate"],
+        catalog.map((offer) => {
+          const evidence = offer.evidence[0];
+          return [
+            offer.id, evidence?.sourceItemId, offer.label, offer.identity.category, rawText(offer), unitPriceText(offer), packageText(offer),
+            keyText(offer), conditionsText(offer), offer.applicability, offer.calendarRule, offer.observedAt, freshnessText(offer, evaluatedAt),
+            evidence?.id, evidence?.retrievedUrl, evidence?.sourceUrl, gateText(offer),
+          ];
+        }),
+      ), "");
+    }
+
+    const weeklyAds = snapshot.offers.filter((offer) => offer.channel !== GATE_CHANNEL);
+    lines.push(`## Weekly-ad offers (${weeklyAds.length}; in-store-ad, shown for reference only and never counted by the ${GATE_CHANNEL} gate)`, "");
+    if (weeklyAds.length === 0) lines.push("None.", "");
+    else {
+      lines.push(...table(
+        ["Offer", "Source item", "Name", "Category", "Raw price and condition text", "Unit price", "Package terms",
+          "comparisonKey or unknown fields", "Conditions", "Applicability", "Calendar rule", "Raw validity", "Starts / expires",
+          "Freshness", "Evidence", "Source URL", "Gate"],
+        weeklyAds.map((offer) => {
+          const evidence = offer.evidence[0];
+          return [
+            offer.id, evidence?.sourceItemId, offer.label, offer.identity.category, rawText(offer), unitPriceText(offer), packageText(offer),
+            keyText(offer), conditionsText(offer), offer.applicability, offer.calendarRule,
+            rawValidityText(offer), `${offer.startsAt ?? "unknown"} / ${offer.expiresAt ?? "unknown"}`, freshnessText(offer, evaluatedAt),
+            evidence?.id, evidence?.sourceUrl, gateText(offer),
+          ];
+        }),
+      ), "");
+    }
 
     // H4: only the validations that count for the offer under R9.
     const countedRows = snapshot.offers.filter((offer) => counted.has(offer.id)).flatMap((offer) =>
@@ -1070,8 +1366,8 @@ function renderReport(log: RunLog, outcome: Outcome, exitCode: number): string {
     if (countedRows.length === 0) lines.push("None.", "");
     else lines.push(...table(["Offer", "Source item", "Validation checkedAt", "Applicability evidence", "Calendar evidence", "Evidence IDs"], countedRows), "");
 
-    const suggestions = candidatePairs(snapshot.offers);
-    lines.push(`## Candidate cross-family pairs (${suggestions.length}; suggestions for human validation, not counted)`, "");
+    const suggestions = candidatePairs(catalog);
+    lines.push(`## Candidate cross-family pairs (${suggestions.length}; ${GATE_CHANNEL} offers only; suggestions for human validation, not counted)`, "");
     if (suggestions.length === 0) lines.push("None.", "");
     else lines.push(...table(["Left", "Right", "Category", "comparisonKey", "Channel", "Basis"],
       suggestions.map((pair) => [pair.leftId, pair.rightId, pair.category, pair.comparisonKey, pair.channel, pair.basis])), "");

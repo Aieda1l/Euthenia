@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 import { collect, parseCollectArgs, terminalSafe } from "../src/source/collect.js";
 
 // Thin CLI: npm run source:collect -- --postal-code 98105 [--validations <file>] [--report <file>]
+// Collects the Flipp weekly ads (reference only), then the Kroger catalog for
+// QFC 70500807, and evaluates the retailer-pickup gate. KROGER_CLIENT_ID and
+// KROGER_CLIENT_SECRET are read from the environment (never from a file); if
+// either is missing or padded, the run exits 2 before any request.
 // Exit codes: 0 PASS, 1 BLOCKED, 2 source/schema/usage error, 3 deferred by Retry-After.
 // H9: messages can carry source text, so every printed line escapes control characters.
 

@@ -671,6 +671,24 @@ describe("request headers", () => {
     expect([inspect(response, { depth: 10 }), ...attempts.map(auditText)].join("\n")).not.toContain(TOKEN);
   });
 
+  it("rebuilds a redirect error whose target carries the token: redacted URL named once, status kept", async () => {
+    const fetcher = sequence(() => statusResponse(302, { location: `https://backflipp.wishabi.com/flipp/items/1?t=${TOKEN}` }));
+    const error = await fetchFlippResponse(KROGER_URL, { fetcher, headers }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FlippSourceError);
+    const redacted = "https://backflipp.wishabi.com/flipp/items/1?t=[redacted]";
+    expect((error as FlippSourceError).url).toBe(redacted);
+    expect((error as FlippSourceError).status).toBe(302);
+    expect((error as Error).message.split(redacted)).toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("never follows a same-host redirect whose Location carries the token", async () => {
+    const fetcher = sequence(() => statusResponse(302, { location: `/v1/products?t=${TOKEN}` }), () => jsonResponse("{}"));
+    const error = await fetchFlippResponse(KROGER_URL, { fetcher, headers }).catch((caught: unknown) => caught);
+    expect((error as Error).message).toMatch(/Location carries a request header value/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("names a rejected redirect's target URL exactly once, with or without caller headers", async () => {
     const target = "https://backflipp.wishabi.com/flipp/items/1";
     for (const options of [{}, { headers }]) {

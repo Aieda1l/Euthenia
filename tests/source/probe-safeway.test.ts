@@ -279,7 +279,7 @@ describe("runProbe evidence for the channel and store (review N2, N3)", () => {
         : json(searchJson([{ id: "970000001", price: 1.99 }], { storeId: "2980" }))),
     });
     const { output, lines } = await run(site.fetcher);
-    expect(output).toContain("hint: in-store searches counted but pickup searches did not; the pickup parameter value may be wrong");
+    expect(output).toContain("hint: in-store searches counted but fewer than 2 pickup searches did; the pickup parameter value may be wrong");
     expect(lines.at(-1)).toBe("NOT FEASIBLE");
   });
 

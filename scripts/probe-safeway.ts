@@ -458,7 +458,7 @@ export async function runProbe(deps: ProbeDeps): Promise<ExitCode> {
     say(`${D1_MODE} mode: ${pickupEchoed ? "echoed by the response" : "not confirmed by the response (see modePricesDiffer; validation in Pickup mode on the site still applies)"}`);
     const instoreCounted = results.some((result) => result.mode !== D1_MODE && result.analysis.counts);
     if (!verdict.feasible && instoreCounted) {
-      say(`hint: in-store searches counted but ${D1_MODE} searches did not; the ${D1_MODE} parameter value may be wrong. Report this before choosing a fallback.`);
+      say(`hint: in-store searches counted but fewer than ${verdict.needed} ${D1_MODE} searches did; the ${D1_MODE} parameter value may be wrong. Report this before choosing a fallback.`);
     }
     say(verdict.feasible ? "FEASIBLE" : "NOT FEASIBLE");
 

@@ -20,13 +20,13 @@ export const FAILED_BODY_LIMIT_BYTES = 1024 * 1024;
 /** Source, transport or schema failure. Not retried beyond the documented policy. */
 export class FlippSourceError extends Error {
   override name = "FlippSourceError";
+  /** The message without the URL suffix, so a redacted copy can be rebuilt. */
+  readonly detail: string;
   /**
    * `status` is the HTTP status of the response that caused the failure, or
    * null when there was none (transport error, timeout, schema problem).
    * A11: the collector treats an item-detail 404/410 as a per-item exclusion.
    */
-  /** The message without the URL suffix, so a redacted copy can be rebuilt. */
-  readonly detail: string;
   constructor(message: string, readonly url: string | null = null, readonly status: number | null = null) {
     super(url === null ? message : `${message} (${url})`);
     this.detail = message;
@@ -412,7 +412,8 @@ function validated(reply: RawReply, requestUrl: URL): FlippResponse {
   try {
     json = JSON.parse(text);
   } catch (error) {
-    throw fail(`malformed JSON: ${error instanceof Error ? error.message : String(error)}`);
+    // Only the parse error's kind, never V8's message: it quotes the body around the error.
+    throw fail(`malformed JSON (${error instanceof Error ? error.name : "parse error"})`);
   }
   return { requestUrl: requestUrl.href, finalUrl: where, bytes, text, json };
 }

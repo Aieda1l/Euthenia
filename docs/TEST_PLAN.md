@@ -12,6 +12,7 @@ As of 2026-09-24. These are the real scripts from `package.json`:
 | `npm run typecheck` | `tsc --noEmit`: strict ES2022, NodeNext |
 | `npm run lint` | `eslint .` (flat config, typescript-eslint recommended) |
 | `npm run source:collect -- --postal-code 98105 [--validations <file>] [--report <file>]` | Live Flipp collection and source-proof gate. Exit 0 PASS (snapshot replaced), 1 BLOCKED, 2 source/usage error, 3 deferred. Writes `data/audit/<run-id>/`. |
+| `npx tsx scripts/probe-safeway.ts` | S0 Safeway store-search feasibility probe. Run only on the user's PC (Safeway blocks this cloud host). Exit 0 FEASIBLE, 1 NOT FEASIBLE, 2 error or self-check failure. Saves search bodies only, under `data/audit/`. |
 
 Pinned toolchain: typescript 6.0.3, typescript-eslint 8.70.1, eslint 10.11.0, vitest 5.0.1 (with peer vite 8.3.1), tsx 4.23.15, @types/node 22.20.4.
 - TypeScript 7 is not used, because typescript-eslint 8.70.1 accepts only TypeScript `<6.1.0`.
@@ -19,7 +20,7 @@ Pinned toolchain: typescript 6.0.3, typescript-eslint 8.70.1, eslint 10.11.0, vi
 
 `tests/setup.ts` makes global `fetch` throw during unit tests. Every HTTP test injects a fetcher, so the unit suite never touches the network.
 
-Last verified: 2026-09-24 at 8da5045 after `npm ci`, with 593/593 tests passing and typecheck and lint clean. The live gate run is BLOCKED; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
+Last verified: 2026-09-29 after `npm ci`, with 731/731 tests passing and typecheck and lint clean. The live gate run is BLOCKED; see [M1_SOURCE_PROOF.md](research/M1_SOURCE_PROOF.md).
 
 Later tasks add UI, Electron and smoke scripts as planned. Do not report them until they exist.
 

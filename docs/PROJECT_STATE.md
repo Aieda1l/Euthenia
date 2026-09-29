@@ -16,10 +16,10 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
   - Per the plan's stop condition, Tasks 2-4 wait.
 - **Blocking decision for the user:** how to get comparable competitor prices. Weekly ads alone give 0 cross-chain pairs this week, even with relaxed identity defaults. The recommended option is catalog prices: the Kroger Public API (needs the user's developer credentials) plus a Safeway product-search probe. That changes the gate's channel design, so it needs user approval.
 
-## Last verified state (2026-09-28)
+## Last verified state (2026-09-29)
 
-- Branch `claude/loving-ptolemy-6dkn4y`. HEAD includes 8da5045 (code) and later docs commits.
-- `npm ci`, `npm test` (593/593), `npm run typecheck` and `npm run lint` all pass on Node 22.22.2 (Linux).
+- Branch `claude/loving-ptolemy-6dkn4y`. HEAD includes the catalog Wave 1 code; the weekly-ad gate evidence is from 8da5045.
+- `npm ci`, `npm test` (731/731), `npm run typecheck` and `npm run lint` all pass on Node 22.22.2 (Linux).
 - The live `npm run source:collect -- --postal-code 98105 --validations docs/research/M1_SOURCE_VALIDATIONS_2026-09-24.json` exits 1 (BLOCKED):
   - 43/43 live requests accepted;
   - 39 produce/meat offers normalized;
@@ -30,13 +30,16 @@ Since 2026-09-24, execution runs in Claude Code, per the user's `CLAUDE.md` (DEC
 
 ## Next action
 
-1. Catalog price amendment approved (DEC-20260928-002). Implement Wave 1 in parallel:
-   - C0: contracts and proof;
-   - C1: allowlisted client with headers;
-   - S0: Safeway probe script for the user's PC.
+1. **Catalog Wave 1 is done and reviewed:**
+   - C0: contracts and gate rules, plus provider-channel binding and the catalog validation window;
+   - C1: the Kroger-allowlisted client with header redaction;
+   - S0: the Safeway probe script.
 
-   Then K1, K2 and G1.
-2. **User actions pending:** Kroger developer credentials in environment settings (K3, L1); run S0 on the Windows PC once it is reviewed.
+   Code at the latest commit; the independent spec and quality passes have no blocking findings.
+2. **Next:** K1, the Kroger client and normalizer (offline, fixtures), then K2 (collector wiring) and G1 (replay).
+3. **User actions pending:**
+   - (a) Run the Safeway probe on the Windows PC and paste its output. From the repo root: `git pull`, `npm ci`, `npx tsx scripts/probe-safeway.ts`, then `"exit code: $LASTEXITCODE"`. If the execution policy blocks it, use `npm.cmd` / `npx.cmd`.
+   - (b) Add Kroger developer credentials (`KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`) to the environment settings, for K3 and L1.
 
 Do not start Tasks 3-4 before the gate can pass. Do not weaken the gate without the user.
 

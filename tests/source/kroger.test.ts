@@ -154,6 +154,18 @@ describe("krogerToken", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a trailing newline on the id", { KROGER_CLIENT_ID: `${CLIENT_ID}\n`, KROGER_CLIENT_SECRET: CLIENT_SECRET }, /KROGER_CLIENT_ID has leading or trailing whitespace/],
+    ["a leading space on the secret", { KROGER_CLIENT_ID: CLIENT_ID, KROGER_CLIENT_SECRET: ` ${CLIENT_SECRET}` }, /KROGER_CLIENT_SECRET has leading or trailing whitespace/],
+  ])("rejects %s, naming only the variable and before any request", async (_label, env, message) => {
+    const fetcher = sequence(() => jsonResponse(tokenBody()));
+    const error = await caught(krogerToken(env, fetcher));
+    expect(error).toBeInstanceOf(KrogerCredentialsError);
+    expect((error as Error).message).toMatch(message);
+    expectNoSecrets(error);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects a client id containing ':' without printing it", async () => {
     const fetcher = sequence(() => jsonResponse(tokenBody()));
     const error = await caught(krogerToken({ KROGER_CLIENT_ID: `${CLIENT_ID}:x`, KROGER_CLIENT_SECRET: CLIENT_SECRET }, fetcher));
@@ -615,6 +627,11 @@ describe("normalizeKroger: D4 organic from the loose PLU", () => {
     const offer = normalize(product({ productId, upc: productId, description }));
     expect(offer.identity).toMatchObject({ category: "produce", organic });
   });
+
+  it("an organic brand beside a conventional PLU and silent text leaves organic unknown", () => {
+    const offer = normalize(product({ productId: "0000000004131", upc: "0000000004131", description: "Fuji Apple", brand: "Simple Truth Organic" }));
+    expect(offer.identity).toMatchObject({ category: "produce", organic: unknown });
+  });
 });
 
 describe("normalizeKroger: D4 fresh/frozen from temperature", () => {
@@ -626,6 +643,8 @@ describe("normalizeKroger: D4 fresh/frozen from temperature", () => {
     ["Frozen conflicting with fresh text", "Fresh Boneless Skinless Chicken Thighs", "Frozen", unknown],
     ["Refrigerated conflicting with previously frozen text", "Previously Frozen Boneless Skinless Chicken Thighs", "Refrigerated", unknown],
     ["Refrigerated beside ambiguous text", "Fresh or Frozen Boneless Skinless Chicken Thighs", "Refrigerated", unknown],
+    ["Refrigerated beside thawed text", "Thawed Boneless Skinless Chicken Thighs", "Refrigerated", unknown],
+    ["Refrigerated beside defrosted text", "Defrosted Boneless Skinless Chicken Thighs", "Refrigerated", unknown],
     ["Ambient", "Boneless Skinless Chicken Thighs", "Ambient", unknown],
     ["no temperature", "Boneless Skinless Chicken Thighs", null, unknown],
     ["fresh text without temperature", "Fresh Boneless Skinless Chicken Thighs", null, known("fresh")],
@@ -642,6 +661,22 @@ describe("normalizeKroger: D4 fresh/frozen from temperature", () => {
     const offer = normalize(meat("Boneless Pork Chops", "Refrigerated", { productId: "0000000004131" }));
     expect(offer.identity).toMatchObject({ category: "meat", freshFrozen: known("fresh") });
     expect(normalize(product({ temperature: { indicator: "Refrigerated" } })).identity).toMatchObject({ category: "produce", organic: unknown });
+  });
+});
+
+describe("normalizeKroger: per-unit estimate guard (K1 review note)", () => {
+  it.each([
+    ["each", "each"],
+    ["1 ct", "1 ct"],
+  ])("UNIT %s with a regularPerUnitEstimate that differs from regular gives no unit price", (_label, size) => {
+    const offer = normalize(product({}, { soldBy: "UNIT", size, price: { regular: 3.99, promo: 0, regularPerUnitEstimate: 1.25 } }));
+    expect(offer.unitPrice).toBeNull();
+    expect(offer.normalizationIssue).toMatch(/regularPerUnitEstimate/);
+  });
+
+  it("UNIT each with an agreeing estimate keeps the each price", () => {
+    const offer = normalize(product({}, { soldBy: "UNIT", size: "each", price: { regular: 1.25, promo: 0, regularPerUnitEstimate: 1.25 } }));
+    expect(offer.unitPrice).toEqual({ basis: "each", cents: { n: "125", d: "1" } });
   });
 });
 

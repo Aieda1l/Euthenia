@@ -89,6 +89,10 @@ function credentials(env: KrogerEnv): { id: string; secret: string } {
     throw new KrogerCredentialsError(`${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not set; ` +
       "set KROGER_CLIENT_ID and KROGER_CLIENT_SECRET in the environment (never in a file)");
   }
+  // A pasted value with a stray space or newline would only fail later as an unexplained 401.
+  for (const [name, value] of [["KROGER_CLIENT_ID", id], ["KROGER_CLIENT_SECRET", secret]] as const) {
+    if (value !== value.trim()) throw new KrogerCredentialsError(`${name} has leading or trailing whitespace; remove it from the environment setting`);
+  }
   // RFC 7617: HTTP Basic auth cannot carry a user id containing ':'.
   if (id.includes(":")) throw new KrogerCredentialsError("KROGER_CLIENT_ID contains ':', which HTTP Basic auth cannot carry; check the value");
   return { id, secret };
@@ -422,7 +426,8 @@ function temperatureFreshFrozen(product: Record<string, unknown>): "fresh" | "fr
 // still resolve it to unknown (alternatives, negation), the text is explicit
 // but ambiguous, and a structured signal must not settle it.
 const ORGANIC_WORDS = /\b(?:organic\w*|conventional\w*)\b/;
-const FRESH_FROZEN_WORDS = /\b(?:fresh|frozen)\b/;
+// Thawed or defrosted meat was frozen; Refrigerated must not make it "fresh".
+const FRESH_FROZEN_WORDS = /\b(?:fresh|frozen|thaw\w*|defrost\w*)\b/;
 
 /**
  * D4 merge: explicit text wins. A structured value applies only when the text
@@ -439,7 +444,9 @@ function merged<T>(fromText: Known<T>, structured: T | null, textMentions: boole
 function withStructuredIdentity(identity: Identity, productId: string, product: Record<string, unknown>, description: string): Identity {
   const text = normalizeText(description);
   if (identity.category === "produce") {
-    return { ...identity, organic: merged(identity.organic, pluOrganic(productId), ORGANIC_WORDS.test(text)) };
+    // An organic claim in the brand ("Simple Truth Organic") also counts as a mention.
+    const brand = normalizeText(typeof product.brand === "string" ? product.brand : "");
+    return { ...identity, organic: merged(identity.organic, pluOrganic(productId), ORGANIC_WORDS.test(text) || ORGANIC_WORDS.test(brand)) };
   }
   return { ...identity, freshFrozen: merged(identity.freshFrozen, temperatureFreshFrozen(product), FRESH_FROZEN_WORDS.test(text)) };
 }
@@ -552,8 +559,9 @@ interface PriceTerms {
 /**
  * D3: exactly one items[] entry with a positive regular price of at most 2
  * decimals; the unit basis from unitBasis. regular, promo, size, soldBy and
- * the per-unit estimates stay verbatim in rawPrice; the promo price and the
- * estimates never become the unit price.
+ * the per-unit estimates are kept in rawPrice (JSON numbers as their shortest
+ * round-trip text, e.g. 2.50 as "2.5"; the exact bytes are hashed in the
+ * evidence); the promo price and the estimates never become the unit price.
  */
 function normalizePrice(items: unknown, description: string): PriceTerms {
   const rawPrice: Record<string, string | null> = {
@@ -583,6 +591,11 @@ function normalizePrice(items: unknown, description: string): PriceTerms {
 
   const basis = unitBasis(item.soldBy, item.size);
   if ("issue" in basis) return none([...issues, basis.issue]);
+  // A per-item price whose per-unit estimate differs from it may really be per lb.
+  const estimate = isRecord(price) ? price.regularPerUnitEstimate : undefined;
+  if (basis.basis === "each" && typeof estimate === "number" && isRecord(price) && estimate !== price.regular) {
+    return none([...issues, `regularPerUnitEstimate ${String(estimate)} differs from the each-priced regular ${String(price.regular)}; unit unknown`]);
+  }
   const sizeProblem = descriptionSizeProblem(description, String(item.size), basis);
   if (sizeProblem !== null) return none([...issues, sizeProblem]);
   return {

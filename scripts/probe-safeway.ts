@@ -78,6 +78,10 @@ export interface SearchAnalysis {
   priced: number;
   /** Distinct values of any storeId-like field in the response. */
   storeIds: string[];
+  /** Distinct values of any field named "channel" (does the API echo the mode it priced?). */
+  channels: string[];
+  /** Top-level field names of the JSON response. */
+  topFields: string[];
   /** Meets the per-query criterion: HTTP 200 JSON with store-scoped prices. */
   counts: boolean;
   reason: string;
@@ -121,19 +125,23 @@ function findProducts(json: unknown): Product[] {
   return found;
 }
 
-function findStoreIds(json: unknown): string[] {
-  const ids = new Set<string>();
+/** Distinct string/number values of every field whose name matches `name`. */
+function fieldValues(json: unknown, name: RegExp): string[] {
+  const values = new Set<string>();
   walk(json, (value) => {
     if (!isRecord(value)) return;
-    for (const [name, field] of Object.entries(value)) {
-      if (/^store_?id$/i.test(name) && (typeof field === "string" || typeof field === "number")) ids.add(String(field));
+    for (const [field, content] of Object.entries(value)) {
+      if (name.test(field) && (typeof content === "string" || typeof content === "number")) values.add(String(content));
     }
   });
-  return [...ids].sort();
+  return [...values].sort();
 }
 
+const findStoreIds = (json: unknown): string[] => fieldValues(json, /^store_?id$/i);
+const findChannels = (json: unknown): string[] => fieldValues(json, /^channel$/i);
+
 export function analyzeSearch(reply: SearchReply): SearchAnalysis {
-  const empty = { json: false, products: [], count: 0, numFound: null, priced: 0, storeIds: [] };
+  const empty = { json: false, products: [], count: 0, numFound: null, priced: 0, storeIds: [], channels: [], topFields: [] };
   if (reply.status === null) return { ...empty, counts: false, reason: "no response" };
   let parsed: unknown;
   let json = false;
@@ -149,7 +157,9 @@ export function analyzeSearch(reply: SearchReply): SearchAnalysis {
   const response = isRecord(parsed) && isRecord(parsed.response) ? parsed.response : parsed;
   const numFound = isRecord(response) && typeof response.numFound === "number" ? response.numFound : null;
   const storeIds = json ? findStoreIds(parsed) : [];
-  const analysis = { json, products, count: products.length, numFound, priced: products.filter(hasPrice).length, storeIds };
+  const channels = json ? findChannels(parsed) : [];
+  const topFields = json && isRecord(parsed) ? Object.keys(parsed) : [];
+  const analysis = { json, products, count: products.length, numFound, priced: products.filter(hasPrice).length, storeIds, channels, topFields };
   const otherStores = storeIds.filter((id) => id !== STORE_ID);
   const reason =
     reply.status !== 200 ? `HTTP ${reply.status}`
@@ -386,7 +396,7 @@ export async function runProbe(deps: ProbeDeps): Promise<ExitCode> {
         const reply = await request(deps.fetcher, searchUrl(base, query, mode.channel), headers, key);
         const analysis = analyzeSearch(reply);
         results.push({ index: position + 1, query, mode: mode.name, reply, analysis });
-        const found = !analysis.json ? "" : `; products ${analysis.count}${analysis.numFound === null ? "" : ` (numFound ${analysis.numFound})`}, priced ${analysis.priced}, ${analysis.storeIds.length === 0 ? "store not echoed" : `store ids ${analysis.storeIds.join(", ")}`}`;
+        const found = !analysis.json ? "" : `; products ${analysis.count}${analysis.numFound === null ? "" : ` (numFound ${analysis.numFound})`}, priced ${analysis.priced}, ${analysis.storeIds.length === 0 ? "store not echoed" : `store ids ${analysis.storeIds.join(", ")}`}, ${analysis.channels.length === 0 ? "channel not echoed" : `channel echoed ${analysis.channels.join(", ")}`}`;
         say(`[${position + 1}] ${mode.name} "${query}": ${describeReply(reply, key)}${found} -> ${analysis.counts ? "counts" : `not counted: ${analysis.reason}`}`);
       }
     } else {
@@ -401,6 +411,7 @@ export async function runProbe(deps: ProbeDeps): Promise<ExitCode> {
       if (source !== undefined && product !== undefined) {
         say(`product fields (${source.mode} "${source.query}", first product): ${Object.keys(product).join(", ")}`);
         say(`product sample: ${sampleFields(product)}`);
+        say(`response fields: ${source.analysis.topFields.join(", ") || "(not a JSON object)"}`);
       } else {
         say("product fields: no products returned");
       }
@@ -435,7 +446,11 @@ export async function runProbe(deps: ProbeDeps): Promise<ExitCode> {
 
     const verdict = feasibility(results.map((result) => ({ mode: result.mode, counts: result.analysis.counts })));
     if (stop !== null) say(`stopped: ${stop}`);
-    say(`criterion: ${verdict.met}/${QUERIES.length} ${D1_MODE} queries returned HTTP 200 JSON with store-scoped prices (need ${verdict.needed})`);
+    // A counting response that names no store is store-scoped only by the request (review N3).
+    const echoed = results.filter((result) =>
+      result.mode === D1_MODE && result.analysis.counts && result.analysis.storeIds.includes(STORE_ID)).length;
+    say(`criterion: ${verdict.met}/${QUERIES.length} ${D1_MODE} queries returned HTTP 200 JSON with store-scoped prices (need ${verdict.needed}); ` +
+      `${echoed} of them echoed store ${STORE_ID}${echoed === 0 ? " (store scope not confirmed by the response)" : ""}`);
     say(verdict.feasible ? "FEASIBLE" : "NOT FEASIBLE");
 
     // 5. Self-check before anything is printed or saved.

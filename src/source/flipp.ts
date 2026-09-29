@@ -247,17 +247,25 @@ function report(
 ): void {
   const reply = "reply" in outcome ? outcome.reply : null;
   // A copy, so a large rejected body is not kept alive by its first megabyte.
-  const body = error !== null && reply !== null ? reply.bytes.slice(0, FAILED_BODY_LIMIT_BYTES) : null;
+  const kept = error !== null && reply !== null ? reply.bytes.slice(0, FAILED_BODY_LIMIT_BYTES) : null;
   exchange.onAttempt({
     requestUrl: exchange.requestUrl.href,
-    url: where.url.href,
+    url: exchange.redact(where.url.href),
     attempt: where.attempt,
     hop: where.hop,
     status: "reply" in outcome ? outcome.reply.status : outcome.status,
-    error,
-    body,
-    bodyTruncated: body !== null && reply !== null && (reply.truncated || reply.bytes.byteLength > body.byteLength),
+    // A server could echo a caller header value in a body, Location or content type.
+    error: error === null ? null : exchange.redact(error),
+    body: kept === null ? null : redactBody(kept, exchange.redact),
+    bodyTruncated: kept !== null && reply !== null && (reply.truncated || reply.bytes.byteLength > kept.byteLength),
   });
+}
+
+/** A rejected body with caller header values hidden; the exact bytes when none appear. */
+function redactBody(bytes: Uint8Array, redact: (text: string) => string): Uint8Array {
+  const text = new TextDecoder("utf-8").decode(bytes);
+  const hidden = redact(text);
+  return hidden === text ? bytes : new TextEncoder().encode(hidden);
 }
 
 /** Follows at most three manual redirects, each checked against the allowlist and the request's host. */
@@ -279,7 +287,10 @@ async function sendFollowingRedirects(exchange: Exchange, attempt: number): Prom
       next = redirectTarget(reply, hop, exchange.requestUrl);
     } catch (error) {
       report(exchange, where, { reply }, describeError(error));
-      throw error;
+      // The Location header is server text, so it may echo a caller header value.
+      throw error instanceof FlippSourceError
+        ? new FlippSourceError(exchange.redact(error.message), error.url === null ? null : exchange.redact(error.url), error.status)
+        : error;
     }
     report(exchange, where, { reply }, null);
     current = next;

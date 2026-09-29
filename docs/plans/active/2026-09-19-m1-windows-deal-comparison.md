@@ -615,6 +615,10 @@ export interface StoreAttestation {
   4. A family's counted catalog offers share one store scope (`filter.locationId`/`storeid` in `retrievedUrl`).
   5. Counts and used items are keyed by `<provider>:<sourceItemId>`, so IDs never collide across providers.
 
+- **Review additions (2026-09-29, Wave 1 spec review).** These add exclusions only:
+  - **Provider-channel binding.** A Flipp offer must be `in-store-ad`, and a catalog offer must be `retailer-pickup` (the D1 `CATALOG_CHANNEL` constant). A relabeled offer never counts in the other gate.
+  - **Validation timing.** A validation checked after the gate's check time never counts. A catalog validation counts only when its `checkedAt` is between `observedAt` and `observedAt` + 24 h (D5).
+
 ### 4. Human validation (R9) for catalog offers
 
 - **Store attestation.** Once per store, before the collection run, the user adds a StoreAttestation on their PC (qfc.com is blocked from the cloud host). For QFC it confirms that qfc.com's page for 70500807 matches the Location API's name and address. For Safeway it makes the same check for store 2980.

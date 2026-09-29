@@ -868,10 +868,10 @@ describe("catalog channel gate (amendment section 3, synthetic)", () => {
     }
   });
 
-  it("rule 5: counts and pairs are keyed by <provider>:<sourceItemId>, so equal IDs from two providers never collide", () => {
-    // The proof binds no provider to a channel (section 3 has no such rule;
-    // channel is a human-verified field), so a Flipp offer in the gate channel
-    // puts both providers' items into one count.
+  // Rule 5 (provider-keyed counting) across two catalog providers can only be
+  // shown once S1 defines safeway-search offers; see the S1 accept list.
+
+  it("provider-channel binding: Flipp ad offers relabeled retailer-pickup never count in the catalog gate", () => {
     const snap = catalogSnapshot();
     const flipps = IDENTITIES.map((identity, i) => ({ ...makeOffer("albertsons", catalogItemId("kroger", i), identity), channel: "retailer-pickup" as const }));
     snap.offers = [...snap.offers.filter((candidate) => candidate.family === "kroger"), ...flipps];
@@ -879,9 +879,46 @@ describe("catalog channel gate (amendment section 3, synthetic)", () => {
     snap.proof.pairs = [0, 1, 2, 3, 4].map((i) => ({ leftId: catalogOfferId("kroger", i), rightId: flipps[i]!.id, category: IDENTITIES[i]!.category }));
     const evaluation = evaluateProof(snap, NOW);
     expect(evaluation.families.kroger.count).toBe(10);
-    expect(evaluation.families.albertsons.count).toBe(10);
-    expect(evaluation.countedPairs).toHaveLength(5);
-    expect(evaluation.notes.join("\n")).not.toMatch(/already counted/);
+    expect(evaluation.families.albertsons.count).toBe(0);
+    expect(evaluation.countedPairs).toHaveLength(0);
+    expect(exclusion(snap, flipps[0]!.id)).toMatch(/provider flipp requires channel in-store-ad, not retailer-pickup/);
+    expect(evaluation.ok).toBe(false);
+  });
+
+  it("provider-channel binding: a catalog offer labeled in-store-ad never counts in the ad gate", () => {
+    const snap = snapshot();
+    const catalog = { ...makeCatalogOffer("kroger", catalogItemId("kroger", 0), IDENTITIES[0]!), channel: "in-store-ad" as const };
+    snap.offers.push(catalog);
+    snap.proof.validations.push(validationFor(catalog));
+    expect(exclusion(snap, catalog.id)).toMatch(/provider kroger-api requires channel retailer-pickup, not in-store-ad/);
+  });
+
+  it.each([
+    ["before the observation", "2026-09-24T11:59:59.999Z"],
+    ["more than 24 h after the observation", "2026-09-25T12:00:00.001Z"],
+  ])("a catalog validation checked %s does not count (section 4, D5)", (_label, checkedAt) => {
+    const snap = catalogSnapshot();
+    snap.proof.validations = snap.proof.validations.map((validation) =>
+      (validation.offerId === KC0 ? { ...validation, checkedAt } : validation));
+    expect(exclusion(snap, KC0)).toMatch(/catalog validation checkedAt is not within 24 h after observedAt/);
+  });
+
+  it("a catalog validation checked exactly at the observation or 24 h later still counts", () => {
+    for (const checkedAt of ["2026-09-24T12:00:00.000Z", "2026-09-25T12:00:00.000Z"]) {
+      const snap = catalogSnapshot();
+      snap.proof.validations = snap.proof.validations.map((validation) =>
+        (validation.offerId === KC0 ? { ...validation, checkedAt } : validation));
+      const later = new Date(Math.max(Date.parse(checkedAt), NOW.getTime()));
+      const reasons = evaluateProof(snap, later).excluded.find((entry) => entry.offerId === KC0)?.reasons.join("; ") ?? "";
+      expect(reasons).not.toMatch(/checkedAt/);
+    }
+  });
+
+  it("any validation checked after the gate's check time does not count", () => {
+    const snap = snapshot();
+    snap.proof.validations = snap.proof.validations.map((validation) =>
+      (validation.offerId === K0 ? { ...validation, checkedAt: "2026-09-24T19:00:00.001Z" } : validation));
+    expect(exclusion(snap, K0)).toMatch(/checkedAt is after the check time/);
   });
 
   it("catalog evidence may carry rawValidity {}", () => {

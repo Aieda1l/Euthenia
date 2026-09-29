@@ -11,7 +11,7 @@ import {
   type Validation,
   type ValidationFile,
 } from "../shared/contracts.js";
-import { freshness, isLocalTime, isTimestamp, parseTimestamp } from "../shared/freshness.js";
+import { STALE_AFTER_MS, freshness, isLocalTime, isTimestamp, parseTimestamp } from "../shared/freshness.js";
 import { comparisonKey, identityGaps } from "../shared/identity.js";
 import { compareRational, isRational, makeRational } from "../shared/money.js";
 
@@ -41,6 +41,8 @@ const KROGER_PRODUCT_ID = /^\d{13}$/;
 const KROGER_PRODUCTS_URL = "https://api.kroger.com/v1/products?";
 /** Rule 2: a Kroger filter.locationId is 8 digits (division + store). */
 const KROGER_LOCATION_ID = /^\d{8}$/;
+/** DEC-20260928-002 D1: catalog prices are labeled and validated as retailer-pickup. */
+const CATALOG_CHANNEL: Channel = "retailer-pickup";
 const MIN_SOURCE_ITEMS = 10;
 const MIN_PAIRS = 5;
 const ZERO = makeRational(0);
@@ -228,10 +230,25 @@ function offerShapeProblems(value: unknown): string[] {
   return problems;
 }
 
-/** Problems that stop a validation from counting (R9). Empty means valid. */
-function validationProblems(validation: Validation, offer: Offer): string[] {
+/**
+ * Problems that stop a validation from counting (R9). Empty means valid.
+ * With `nowMs`, a validation checked after the gate's check time never counts.
+ */
+function validationProblems(validation: Validation, offer: Offer, nowMs?: number): string[] {
   const problems: string[] = [];
-  if (!isTimestamp(validation.checkedAt)) problems.push("checkedAt is not a strict ISO 8601 timestamp");
+  const checked = parseTimestamp(validation.checkedAt);
+  if (checked === null) problems.push("checkedAt is not a strict ISO 8601 timestamp");
+  else {
+    if (nowMs !== undefined && checked > nowMs) problems.push("checkedAt is after the check time");
+    // Section 4 / D5: a catalog price is checked on the retailer site within
+    // 24 h after it was observed, so an older or earlier check never binds.
+    if (offer.evidence.some((evidence) => isCatalogProvider(evidence.provider))) {
+      const observed = parseTimestamp(offer.observedAt);
+      if (observed === null || checked < observed || checked - observed > STALE_AFTER_MS) {
+        problems.push("catalog validation checkedAt is not within 24 h after observedAt");
+      }
+    }
+  }
   const evidenceIds = Array.isArray(validation.evidenceIds) ? validation.evidenceIds : [];
   if (evidenceIds.length === 0) problems.push("no evidence IDs");
   for (const id of evidenceIds) {
@@ -294,6 +311,21 @@ function calendarProblems(offer: Offer, provider: unknown): string[] {
   if (expires === null) problems.push(`calendar rule ${offer.calendarRule} without a strict ISO 8601 expiresAt`);
   if (starts !== null && expires !== null && starts >= expires) problems.push("startsAt is not before expiresAt");
   return problems;
+}
+
+/**
+ * Provider-channel binding: Flipp weekly-ad offers are in-store-ad, catalog
+ * offers are CATALOG_CHANNEL, so a relabeled offer never counts in the other
+ * gate (amendment section 1, D2).
+ */
+function channelProblems(offer: Offer, provider: unknown): string[] {
+  if (provider === "flipp" && offer.channel !== "in-store-ad") {
+    return [`provider flipp requires channel in-store-ad, not ${String(offer.channel)}`];
+  }
+  if (isCatalogProvider(provider) && offer.channel !== CATALOG_CHANNEL) {
+    return [`provider ${provider} requires channel ${CATALOG_CHANNEL}, not ${String(offer.channel)}`];
+  }
+  return [];
 }
 
 /**
@@ -363,12 +395,13 @@ export function evaluateProof(snapshot: SourceSnapshot, now: Date): ProofEvaluat
     const provider: unknown = single?.provider;
 
     const candidates = validationsByOffer.get(offer.id) ?? [];
-    const problemSets = candidates.map((validation) => validationProblems(validation, offer));
+    const problemSets = candidates.map((validation) => validationProblems(validation, offer, nowMs));
     if (candidates.length === 0) why.push("no valid validation (none provided)");
     else if (!problemSets.some((problems) => problems.length === 0)) why.push(`no valid validation (${problemSets.flat().join("; ")})`);
 
     if (offer.applicability !== "verified") why.push("applicability is not verified");
     why.push(...calendarProblems(offer, provider));
+    why.push(...channelProblems(offer, provider));
     const state = freshness(offer, now);
     if (state !== "fresh") why.push(`freshness is ${state}`);
     // A future observation would otherwise stay "fresh" beyond 24h of real time.

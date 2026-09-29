@@ -639,6 +639,9 @@ describe("request headers", () => {
     ["a cross-host redirect", () => sequence(() => statusResponse(302, { location: "https://backflipp.wishabi.com/flipp/items/1" }))],
     ["a deferral", () => sequence(() => statusResponse(429, { "retry-after": "60" }))],
     ["exhausted retries", () => sequence(() => statusResponse(503), () => statusResponse(503), () => statusResponse(503))],
+    ["a 401 whose body echoes the header", () => sequence(() => jsonResponse(`{"error":"bad header ${SECRET}"}`, { status: 401 }))],
+    ["a cross-host redirect whose location names the token", () => sequence(() =>
+      statusResponse(302, { location: `https://backflipp.wishabi.com/flipp/items/1?t=${TOKEN}` }))],
   ])("never records the header value on %s", async (_label, makeFetcher) => {
     const fetcher = makeFetcher();
     const attempts: FlippAttempt[] = [];

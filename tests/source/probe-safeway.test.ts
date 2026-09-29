@@ -249,6 +249,27 @@ describe("key redaction helpers", () => {
   });
 });
 
+describe("runProbe evidence for the channel and store (review N2, N3)", () => {
+  it("prints the response's top-level fields, any echoed channel values and how many counting responses echoed store 2980", async () => {
+    const site = fakeSite({
+      search: (url) => json(searchJson([{ id: "970000001", price: 1.99 }],
+        url.searchParams.get("channel") === "pickup" ? { storeId: "2980", channel: "pickup" } : {})),
+    });
+    const { output, lines } = await run(site.fetcher);
+    expect(output).toMatch(/response fields: appCode, response, storeId, channel/);
+    expect(output).toMatch(/pickup "gala apples":.*channel echoed pickup/);
+    expect(output).toMatch(/instore "gala apples":.*channel not echoed/);
+    expect(output).toContain("criterion: 3/3 pickup queries returned HTTP 200 JSON with store-scoped prices (need 2); 3 of them echoed store 2980");
+    expect(lines.at(-1)).toBe("FEASIBLE");
+  });
+
+  it("says so when no counting response echoed the store", async () => {
+    const site = fakeSite({ search: () => json(searchJson([{ id: "970000001", price: 1.99 }])) });
+    const { output } = await run(site.fetcher);
+    expect(output).toContain("(need 2); 0 of them echoed store 2980 (store scope not confirmed by the response)");
+  });
+});
+
 describe("runProbe", () => {
   it("prints a feasible summary and saves only the six search bodies", async () => {
     const site = fakeSite();
